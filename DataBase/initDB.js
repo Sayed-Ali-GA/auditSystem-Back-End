@@ -33,12 +33,13 @@ const createTables = async () => {
         
     // Table of StoreManagers
         await pool.query(`
-            CREATE TABLE StoreManagers (
-                StoreManagerID SERIAL PRIMARY KEY,
-                StoreManagerName VARCHAR(255) NOT NULL,
-                oracleID INTEGER,
-                BrandID INTEGER REFERENCES Brands(BrandID),
-                LocationID INTEGER REFERENCES Locations(LocationID)
+          CREATE TABLE StoreManagers (
+            StoreManagerID SERIAL PRIMARY KEY,
+            StoreManagerName VARCHAR(255) NOT NULL,
+            OracleID INTEGER UNIQUE,
+            BrandID INTEGER REFERENCES Brands(BrandID),
+            LocationID INTEGER REFERENCES Locations(LocationID)
+
             );
         `);
 
