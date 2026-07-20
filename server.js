@@ -10,6 +10,7 @@ const location = require('./controllers/admin/Location');
 const opsManagers = require('./controllers/admin/OpsManager');
 const storeManagers = require('./controllers/admin/StoreManager');
 const stores = require('./controllers/admin/Stores');
+const auditPoints = require('./controllers/admin/AuditPints');
 
 
 
@@ -31,6 +32,7 @@ app.use('/api', location);
 app.use('/api', opsManagers);
 app.use('/api', storeManagers);
 app.use('/api', stores);
+app.use('/api', auditPoints);
 
 
 app.get('/', (req, res) => {
