@@ -9,6 +9,7 @@ const criteria = require('./controllers/admin/Criteria');
 const location = require('./controllers/admin/Location');
 const opsManagers = require('./controllers/admin/OpsManager');
 const storeManagers = require('./controllers/admin/StoreManager');
+const stores = require('./controllers/admin/Stores');
 
 
 
@@ -29,6 +30,7 @@ app.use('/api', criteria);
 app.use('/api', location);
 app.use('/api', opsManagers);
 app.use('/api', storeManagers);
+app.use('/api', stores);
 
 
 app.get('/', (req, res) => {
