@@ -4,6 +4,8 @@ const cors = require('cors');
 require('dotenv').config();
 const pool = require('./config/db'); 
 
+const chalk = require("chalk");
+
 const brand = require('./controllers/admin/Brands');
 const criteria = require('./controllers/admin/Criteria');
 const location = require('./controllers/admin/Location');
@@ -16,6 +18,25 @@ const auditPoints = require('./controllers/admin/AuditPints');
 
 const app = express();
 
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on("finish", () => {
+        const time = Date.now() - start;
+        let color = res.statusCode >= 500 
+            ? chalk.red 
+            : res.statusCode >= 400 
+            ? chalk.yellow 
+            : chalk.green;
+        console.log(
+            `${chalk.gray(new Date().toLocaleTimeString())} | ` +
+            `${chalk.magenta(req.method)} ` +
+            `${chalk.white(req.originalUrl)} | ` +
+            `${color(res.statusCode)} | ` +
+            `${chalk.cyan(time + "ms")}`
+        );
+    });
+    next();
+});
 
 app.use(cors());
 app.use(express.json());

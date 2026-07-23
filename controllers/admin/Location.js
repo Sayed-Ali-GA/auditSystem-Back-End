@@ -15,7 +15,7 @@ router.get("/Location", async (req, res) => {
 });     
 
 
-router.post("/Add-Location", async (req, res) => {
+router.post("/Location", async (req, res) => {
   const { LocationName } = req.body;
   try {
     const result = await pool.query(

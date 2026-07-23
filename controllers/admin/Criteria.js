@@ -18,19 +18,30 @@ router.get("/MajorCriteria", async (req, res) => {
 
 
 
-router.post("/Add-MajorCriteria", async (req, res) => {
-  const {  MajorCriteriaName } = req.body;
+router.post("/MajorCriteria", async (req, res) => {
+
+  const { majorcriterianame } = req.body;
+
   try {
     const result = await pool.query(
-      "INSERT INTO MajorCriteria (MajorCriteriaName) VALUES ($1) RETURNING *",
-      [ MajorCriteriaName]
+      `
+      INSERT INTO MajorCriteria (MajorCriteriaName)
+      VALUES ($1)
+      RETURNING *
+      `,
+      [majorcriterianame]
     );
+
     res.status(201).json(result.rows[0]);
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Something went wrong",error: err.message});
+
+    res.status(500).json({
+      error: err.message
+    });
   }
-}); 
+});
 
 
 module.exports = router;

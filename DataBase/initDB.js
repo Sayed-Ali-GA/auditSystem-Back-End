@@ -51,7 +51,8 @@ const createTables = async () => {
                 StoreCode VARCHAR(255) NOT NULL,
                 BrandID INTEGER REFERENCES Brands(BrandID),
                 LocationID INTEGER REFERENCES Locations(LocationID),
-                opsManagerID INTEGER REFERENCES OpsManagers(OpsManagerID)
+                opsManagerID INTEGER REFERENCES OpsManagers(OpsManagerID),
+                StoreManagerID INTEGER REFERENCES StoreManagers(StoreManagerID)
             );
         `);
 
@@ -111,4 +112,4 @@ createTables();
 // 
 // To Add Table use 
 // node ./DataBase/initDB.js
-
+// DROP TABLE Stores CASCADE;

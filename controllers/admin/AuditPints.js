@@ -8,14 +8,34 @@ const pool = require("../../config/db");
 
 
 
-
 router.get("/audit-points", async (req, res) => {
   try {
-     const result = await pool.query("SELECT * FROM AuditPoints");
+    const result = await pool.query(`
+      SELECT
+        ap.AuditPointID,
+        ap.AuditComment,
+        ap.SubPointCriteria,
+        ap.Weightage,
+        ap.RiskMatrix,
+
+        mc.MajorCriteriaID,
+        mc.MajorCriteriaName
+
+      FROM AuditPoints ap
+
+      LEFT JOIN MajorCriteria mc
+        ON ap.MajorCriteriaID = mc.MajorCriteriaID
+
+      ORDER BY ap.AuditPointID;
+    `);
+
     res.json(result.rows);
+
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Internal server error" });
+    res.status(500).json({
+      message: "Internal server error"
+    });
   }
 });
 
@@ -23,7 +43,7 @@ router.get("/audit-points", async (req, res) => {
 
 
 
-router.post("/Add-audit-point", async (req, res) => {
+router.post("/audit-point", async (req, res) => {
 
     const {
         MajorCriteriaID,

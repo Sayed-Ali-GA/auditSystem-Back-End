@@ -16,21 +16,31 @@ router.get("/OpsManagers", async (req, res) => {
 
 
 
-router.post("/Add-OpsManager", async (req, res) => {
-  const { OpsManagerName } = req.body;
-  const { OracleID } = req.body;
-  try {
-    const result = await pool.query(
-        `INSERT INTO OpsManagers (OpsManagerName, OracleID) VALUES ($1, $2) RETURNING *`,
-      [OpsManagerName, OracleID]
-    );
+router.post("/OpsManagers", async (req, res) => {
+    const { OracleID, OpsManagerName } = req.body;
+    try {
+        const result = await pool.query(` INSERT INTO OpsManagers
+            (
+                OracleID,
+                OpsManagerName
+            )
+            VALUES ($1, $2) RETURNING *`,
+            [
+                OracleID,
+                OpsManagerName
+            ]
+        );
 
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Something went wrong",error: err.message});
-  }         
-});
+        res.status(201).json(result.rows[0]);
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            message: error.message
+        });
+    }
+}); 
 
 
 module.exports = router;

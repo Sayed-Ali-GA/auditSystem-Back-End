@@ -17,7 +17,7 @@ router.get("/brands", async (req, res) => {
 
 
 
-router.post("/Add-brand", async (req, res) => {
+router.post("/brands", async (req, res) => {
   const { BrandName } = req.body;
   try {
     const result = await pool.query(
