@@ -43,4 +43,37 @@ router.post("/OpsManagers", async (req, res) => {
 }); 
 
 
+
+
+
+
+router.delete("/OpsManagers/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM OpsManagers WHERE opsmanagerid = $1 RETURNING *",
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Ops Manager not found" });
+    }
+
+    res.status(200).json({
+      message: "Ops Manager deleted successfully",
+      OpsManagers: result.rows[0],
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Something went wrong",
+      details: err.message,
+    });
+  }
+});
+
+
+
+
 module.exports = router;
