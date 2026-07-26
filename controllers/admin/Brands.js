@@ -33,5 +33,32 @@ router.post("/brands", async (req, res) => {
 
 
 
+router.delete("/brands/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM Brands WHERE BrandID = $1 RETURNING *",
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Brand not found" });
+    }
+
+    res.status(200).json({
+      message: "Brand deleted successfully",
+      brand: result.rows[0],
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Something went wrong",
+      details: err.message,
+    });
+  }
+});
+
+
 
 module.exports = router;
