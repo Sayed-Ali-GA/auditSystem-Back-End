@@ -36,6 +36,31 @@ router.post("/Location", async (req, res) => {
 
 
 
+router.delete("/Location/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM Locations WHERE locationid = $1 RETURNING *",
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Location not found" });
+    }
+
+    res.status(200).json({
+      message: "Location deleted successfully",
+      LocationName: result.rows[0],
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Something went wrong",
+      details: err.message,
+    });
+  }
+});
 
 
 
