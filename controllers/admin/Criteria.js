@@ -44,4 +44,32 @@ router.post("/MajorCriteria", async (req, res) => {
 });
 
 
+
+router.delete("/MajorCriteria/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM MajorCriteria WHERE MajorCriteriaID = $1 RETURNING *",
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Criteria not found" });
+    }
+
+    res.status(200).json({
+      message: "Criteria deleted successfully",
+      criteria: result.rows[0],
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Something went wrong",
+      details: err.message,
+    });
+  }
+});
+
+
 module.exports = router;
