@@ -86,15 +86,27 @@ const createTables = async () => {
         `)
 
 
+
         await pool.query(`
             CREATE TABLE Users (
                 UserID SERIAL PRIMARY KEY,
-                OracleID INTEGER,
+                OracleID INTEGER UNIQUE,
                 UserName VARCHAR(255) NOT NULL,
-                UserRole VARCHAR(50) NOT NULL,
-                passwoed VARCHAR(100) NOT NULL
+                Password VARCHAR(255) NOT NULL,
+                LocationID INTEGER REFERENCES Locations(LocationID),
+            RoleID INTEGER REFERENCES Roles(RoleID),
+            CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `); 
+
+
+        await pool.query(`
+            CREATE TABLE Roles (
+                RoleID SERIAL PRIMARY KEY,
+                RoleName VARCHAR(50) UNIQUE NOT NULL
+            );
+        `)
+
 
 
         console.log(`Tables checked/created successfully in database: ${process.env.DB_NAME} ✅✅`);
