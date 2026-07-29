@@ -1,127 +1,136 @@
-const pool = require('../config/db');
+const pool = require("../config/db");
 
- //  Tables creation queries
 const createTables = async () => {
-  try {
+    try {
 
-    // Table of Brands
+        // Table of Brands
         await pool.query(`
-            CREATE TABLE Brands (
+            CREATE TABLE IF NOT EXISTS Brands (
                 BrandID SERIAL PRIMARY KEY,
                 BrandName VARCHAR(255) NOT NULL
             );
         `);
 
 
-
-    // Table of Locations
+        // Table of Locations
         await pool.query(`
-            CREATE TABLE Locations (
+            CREATE TABLE IF NOT EXISTS Locations (
                 LocationID SERIAL PRIMARY KEY,
                 LocationName VARCHAR(255) NOT NULL
             );
         `);
 
-    // Table of OpsManagers(Areas Managers)
-        await pool.query(`  
-            CREATE TABLE OpsManagers (
+
+        // Table of OpsManagers
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS OpsManagers (
                 OpsManagerID SERIAL PRIMARY KEY,
-                OracleID INTEGER,
+                OracleID INTEGER UNIQUE,
                 OpsManagerName VARCHAR(255) NOT NULL
             );
         `);
-        
-    // Table of StoreManagers
-        await pool.query(`
-          CREATE TABLE StoreManagers (
-            StoreManagerID SERIAL PRIMARY KEY,
-            StoreManagerName VARCHAR(255) NOT NULL,
-            OracleID INTEGER UNIQUE,
-            BrandID INTEGER REFERENCES Brands(BrandID),
-            LocationID INTEGER REFERENCES Locations(LocationID)
 
+
+        // Table of StoreManagers
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS StoreManagers (
+                StoreManagerID SERIAL PRIMARY KEY,
+                StoreManagerName VARCHAR(255) NOT NULL,
+                OracleID INTEGER UNIQUE,
+                BrandID INTEGER REFERENCES Brands(BrandID),
+                LocationID INTEGER REFERENCES Locations(LocationID)
             );
         `);
 
 
-    // Table of Stores
+        // Table of Stores
         await pool.query(`
-            CREATE TABLE Stores (
+            CREATE TABLE IF NOT EXISTS Stores (
                 StoreSerial SERIAL PRIMARY KEY,
                 StoreCode VARCHAR(255) NOT NULL,
                 BrandID INTEGER REFERENCES Brands(BrandID),
                 LocationID INTEGER REFERENCES Locations(LocationID),
-                opsManagerID INTEGER REFERENCES OpsManagers(OpsManagerID),
+                OpsManagerID INTEGER REFERENCES OpsManagers(OpsManagerID),
                 StoreManagerID INTEGER REFERENCES StoreManagers(StoreManagerID)
             );
         `);
 
-    // Table of MajorCriteria
+
+        // Table of MajorCriteria
         await pool.query(`
-            CREATE TABLE MajorCriteria (
+            CREATE TABLE IF NOT EXISTS MajorCriteria (
                 MajorCriteriaID SERIAL PRIMARY KEY,
                 MajorCriteriaName VARCHAR(255) NOT NULL
             );
         `);
 
-    // Table of RiskLMatrix
-        await pool.query(`
-            CREATE TYPE RiskLevel AS ENUM (
-                'Low',
-                'Moderate',
-                'High'
-            );
-        `)
 
-    // Table of AuditPoints
+        // Create ENUM Type RiskLevel
         await pool.query(`
-            CREATE TABLE AuditPoints (
+            DO $$ BEGIN
+                CREATE TYPE RiskLevel AS ENUM (
+                    'Low',
+                    'Moderate',
+                    'High'
+                );
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END $$;
+        `);
+
+
+        // Table of AuditPoints
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS AuditPoints (
                 AuditPointID SERIAL PRIMARY KEY,
                 MajorCriteriaID INTEGER REFERENCES MajorCriteria(MajorCriteriaID),
-                auditComment TEXT NOT NULL,
-                subPointCriteria VARCHAR(50) NOT NULL,
-                weightage NUMERIC(5,2) NOT NULL,
-                riskMatrix RiskLevel NOT NULL
+                AuditComment TEXT NOT NULL,
+                SubPointCriteria VARCHAR(50) NOT NULL,
+                Weightage NUMERIC(5,2) NOT NULL,
+                RiskMatrix RiskLevel NOT NULL
             );
-        `)
+        `);
 
 
-
+        // Table of Roles
         await pool.query(`
-            CREATE TABLE Users (
+            CREATE TABLE IF NOT EXISTS Roles (
+                RoleID SERIAL PRIMARY KEY,
+                RoleName VARCHAR(50) UNIQUE NOT NULL
+            );
+        `);
+
+
+        // Table of Users
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS Users (
                 UserID SERIAL PRIMARY KEY,
                 OracleID INTEGER UNIQUE,
                 UserName VARCHAR(255) NOT NULL,
                 Password VARCHAR(255) NOT NULL,
                 LocationID INTEGER REFERENCES Locations(LocationID),
-            RoleID INTEGER REFERENCES Roles(RoleID),
-            CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                RoleID INTEGER REFERENCES Roles(RoleID),
+                IsActive BOOLEAN DEFAULT TRUE,
+                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        `); 
+        `);
 
 
-        await pool.query(`
-            CREATE TABLE Roles (
-                RoleID SERIAL PRIMARY KEY,
-                RoleName VARCHAR(50) UNIQUE NOT NULL
-            );
-        `)
+        console.log(
+            `Tables checked/created successfully in database: ${process.env.DB_NAME} ✅✅`
+        );
 
 
+    } catch (err) {
 
-        console.log(`Tables checked/created successfully in database: ${process.env.DB_NAME} ✅✅`);
-  } catch (err) {
-    console.error('Error creating tables:', err);
-  } finally {
-    pool.end();
-  }
+        console.error("Error creating tables:", err);
+
+    }
 };
 
-createTables();
 
-
-
-// 
-// To Add Table use 
-// node ./DataBase/initDB.js
-// DROP TABLE Stores CASCADE;
+// Run
+createTables()
+    .then(() => {
+        pool.end();
+    });
