@@ -113,4 +113,101 @@ router.delete("/audit-points/:id", async (req, res) => {
 });
 
 
+
+router.put("/audit-points/:id", async (req, res) => {
+
+  const { id } = req.params;
+
+  const {
+    MajorCriteriaID,
+    auditComment,
+    subPointCriteria,
+    weightage,
+    riskMatrix
+  } = req.body;
+
+
+  try {
+
+    const update = await pool.query(
+      `
+      UPDATE AuditPoints
+
+      SET
+        MajorCriteriaID = $1,
+        auditComment = $2,
+        subPointCriteria = $3,
+        weightage = $4,
+        riskMatrix = $5
+
+      WHERE AuditPointID = $6
+
+      RETURNING AuditPointID;
+      `,
+      [
+        MajorCriteriaID,
+        auditComment,
+        subPointCriteria,
+        weightage,
+        riskMatrix,
+        id
+      ]
+    );
+
+
+    if(update.rowCount === 0){
+      return res.status(404).json({
+        error:"Audit Point not found"
+      });
+    }
+
+
+
+    const result = await pool.query(
+      `
+      SELECT
+
+        ap.AuditPointID,
+        ap.AuditComment,
+        ap.SubPointCriteria,
+        ap.Weightage,
+        ap.RiskMatrix,
+
+        mc.MajorCriteriaID,
+        mc.MajorCriteriaName
+
+
+      FROM AuditPoints ap
+
+
+      LEFT JOIN MajorCriteria mc
+
+      ON ap.MajorCriteriaID = mc.MajorCriteriaID
+
+
+      WHERE ap.AuditPointID = $1
+
+      `,
+      [
+        id
+      ]
+    );
+
+
+    res.status(200).json(result.rows[0]);
+
+
+  } catch(err){
+
+    console.error(err);
+
+    res.status(500).json({
+      error:err.message
+    });
+
+  }
+
+});
+
+
 module.exports = router;    

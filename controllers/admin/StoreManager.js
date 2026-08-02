@@ -132,4 +132,65 @@ router.delete("/StoreManagers/:id", async (req, res) => {
 
 
 
+
+
+router.put("/StoreManagers/:id", async (req, res) => {
+  const { id } = req.params;
+  const { StoreManagerName, OracleID, BrandID, LocationID } = req.body;
+
+  try {
+    await pool.query(
+      `
+      UPDATE StoreManagers
+      SET StoreManagerName = $1,
+          OracleID = $2,
+          BrandID = $3,
+          LocationID = $4
+      WHERE StoreManagerID = $5
+      `,
+      [
+        StoreManagerName,
+        OracleID,
+        BrandID,
+        LocationID,
+        id
+      ]
+    );
+
+
+    const result = await pool.query(
+      `
+      SELECT
+        sm.StoreManagerID,
+        sm.StoreManagerName,
+        sm.OracleID,
+        b.BrandID,
+        b.BrandName,
+        l.LocationID,
+        l.LocationName
+
+      FROM StoreManagers sm
+
+      LEFT JOIN Brands b
+        ON sm.BrandID = b.BrandID
+
+      LEFT JOIN Locations l
+        ON sm.LocationID = l.LocationID
+
+      WHERE sm.StoreManagerID = $1
+      `,
+      [id]
+    );
+
+    res.status(200).json(result.rows[0]);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
+
 module.exports = router;

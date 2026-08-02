@@ -60,5 +60,29 @@ router.delete("/brands/:id", async (req, res) => {
 });
 
 
+  router.put("/brands/:id", async (req, res) => {
+    const { id } = req.params;
+    const { BrandName } = req.body; 
+
+    try {
+      const result = await pool.query(
+        "UPDATE Brands SET BrandName = $1 WHERE BrandID = $2 RETURNING *",
+        [BrandName, id]
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: "Brand not found" });
+      }
+
+    res.status(200).json(result.rows[0]);
+    
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({
+        error: "Something went wrong",
+        details: err.message,
+      });
+    }
+  }); 
 
 module.exports = router;

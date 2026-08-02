@@ -63,5 +63,30 @@ router.delete("/Location/:id", async (req, res) => {
 });
 
 
+router.put("/Location/:id", async (req, res) => {
+  const { id } = req.params;
+  const { LocationName } = req.body;
+
+  try {
+    const result = await pool.query(
+      "UPDATE Locations SET LocationName = $1 WHERE locationid = $2 RETURNING *",
+      [LocationName, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Location not found" });
+    }
+
+        res.status(200).json(result.rows[0]);
+   
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Something went wrong",
+      details: err.message,
+    });
+  }
+});
+
 
 module.exports = router;

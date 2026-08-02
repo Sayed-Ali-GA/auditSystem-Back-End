@@ -75,5 +75,35 @@ router.delete("/OpsManagers/:id", async (req, res) => {
 
 
 
+router.put("/OpsManagers/:id", async (req, res) => {
+  const { id } = req.params;
+  const { OracleID, OpsManagerName } = req.body;
+
+  try {
+    const result = await pool.query(
+      `UPDATE OpsManagers
+       SET OracleID = $1,
+           OpsManagerName = $2
+       WHERE opsmanagerid = $3
+       RETURNING *`,
+      [OracleID, OpsManagerName, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Ops Manager not found" });
+    }
+
+    res.status(200).json(result.rows[0]);
+   
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Something went wrong",
+      details: err.message,
+    });
+  }
+});
+
+
 
 module.exports = router;
