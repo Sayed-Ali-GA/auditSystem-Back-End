@@ -116,6 +116,42 @@ const createTables = async () => {
         `);
 
 
+        // Table of AuditAssignments
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS AuditAssignments (
+                AssignmentID SERIAL PRIMARY KEY,
+                StoreSerial INTEGER REFERENCES Stores(StoreSerial),
+                OpsManagerID INTEGER REFERENCES OpsManagers(OpsManagerID),
+                AuditorID INTEGER REFERENCES Users(UserID),
+                CashierName VARCHAR(255),
+                AuditDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                Status VARCHAR(50) DEFAULT 'Pending',
+                TotalScore NUMERIC(5,2),
+                FinalPercentage NUMERIC(5,2),
+                RiskLevel VARCHAR(50)
+            );
+        `);
+
+
+        // Table of AuditEvaluations
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS AuditEvaluations (
+                EvaluationID SERIAL PRIMARY KEY,
+                AssignmentID INTEGER REFERENCES AuditAssignments(AssignmentID),
+                AuditPointID INTEGER REFERENCES AuditPoints(AuditPointID),
+
+                Rating VARCHAR(10),
+                Score NUMERIC(5,2),
+                WeightPercentage NUMERIC(5,2),
+                AuditObservation TEXT,
+                Photos TEXT[],
+
+                AuditOverstation VARCHAR(100),
+                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+
         console.log(
             `Tables checked/created successfully in database: ${process.env.DB_NAME} ✅✅`
         );

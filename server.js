@@ -16,7 +16,7 @@ const opsManagers = require('./controllers/admin/OpsManager');
 const storeManagers = require('./controllers/admin/StoreManager');
 const stores = require('./controllers/admin/Stores');
 const auditPoints = require('./controllers/admin/AuditPints');
-
+const auditorRoutes = require('./controllers/Employee/Auditor')
 
 
 
@@ -60,6 +60,7 @@ app.use('/api', storeManagers);
 app.use('/api', stores);
 app.use('/api', auditPoints);
 app.use("/api/users", authRoutes);
+app.use("/api", auditorRoutes);
 
 
 
