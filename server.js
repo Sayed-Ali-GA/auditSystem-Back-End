@@ -17,7 +17,7 @@ const storeManagers = require('./controllers/admin/StoreManager');
 const stores = require('./controllers/admin/Stores');
 const auditPoints = require('./controllers/admin/AuditPints');
 const auditorRoutes = require('./controllers/Employee/Auditor')
-
+const notificationRoutes = require('./controllers/Notifications/Notifications')
 
 
 const app = express();
@@ -61,6 +61,7 @@ app.use('/api', stores);
 app.use('/api', auditPoints);
 app.use("/api/users", authRoutes);
 app.use("/api", auditorRoutes);
+app.use("/api", notificationRoutes);
 
 
 
