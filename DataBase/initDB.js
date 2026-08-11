@@ -11,6 +11,8 @@ const createTables = async () => {
             );
         `);
 
+        
+
 
         // Table of Locations
         await pool.query(`
@@ -125,7 +127,7 @@ const createTables = async () => {
                 AuditorID INTEGER REFERENCES Users(UserID),
                 CashierName VARCHAR(255),
                 AuditDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                Status VARCHAR(50) DEFAULT 'Pending',
+                Status VARCHAR(50) DEFAULT 'Submitted',
                 TotalScore NUMERIC(5,2),
                 FinalPercentage NUMERIC(5,2),
                 RiskLevel VARCHAR(50)
@@ -133,7 +135,7 @@ const createTables = async () => {
         `);
 
 
-        // Table of AuditEvaluations
+       // Table of AuditEvaluations
         await pool.query(`
             CREATE TABLE IF NOT EXISTS AuditEvaluations (
                 EvaluationID SERIAL PRIMARY KEY,
@@ -144,9 +146,38 @@ const createTables = async () => {
                 Score NUMERIC(5,2),
                 WeightPercentage NUMERIC(5,2),
                 AuditObservation TEXT,
+                ActionPlan TEXT,
+                TargetDate DATE,
                 Photos TEXT[],
 
                 AuditOverstation VARCHAR(100),
+                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+
+        // Unique constraint for evaluation upserts
+        await pool.query(`
+            DO $$
+            BEGIN
+                ALTER TABLE AuditEvaluations
+                ADD CONSTRAINT uq_assignment_auditpoint UNIQUE (AssignmentID, AuditPointID);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END $$;
+        `);
+
+
+        // Table of Notifications
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS Notifications (
+                NotificationID SERIAL PRIMARY KEY,
+                UserID INTEGER REFERENCES Users(UserID),
+                RoleID INTEGER REFERENCES Roles(RoleID),
+                Message TEXT NOT NULL,
+                Type VARCHAR(20) DEFAULT 'info',
+                RelatedAssignmentID INTEGER REFERENCES AuditAssignments(AssignmentID),
+                IsRead BOOLEAN DEFAULT FALSE,
                 CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
