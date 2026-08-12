@@ -154,6 +154,7 @@ const AUDIT_SELECT_BASE = `
         aa.ActionNote,
         aa.RejectionReason,
         aa.RevisionReason,
+        aa.AuditManagerNote,
 
         s.StoreSerial,
         s.StoreCode,
@@ -474,16 +475,17 @@ router.put("/Audits/:id", verifyToken, async (req, res) => {
 
         const { id } = req.params;
         const authUser = getAuthUser(req);
-        const {
-            status,
-            evaluations,
-            actionNote,
-            revisionReason,
-            rejectionReason,
-            cashierName,
-            auditDate,
-            auditOverstation
-        } = req.body;
+       const {
+                status,
+                evaluations,
+                actionNote,
+                auditManagerNote,
+                revisionReason,
+                rejectionReason,
+                cashierName,
+                auditDate,
+                auditOverstation
+            } = req.body;
 
         if (status !== undefined && !ALLOWED_STATUSES.includes(status)) {
             await client.query("ROLLBACK");
@@ -622,6 +624,14 @@ router.put("/Audits/:id", verifyToken, async (req, res) => {
             await client.query(
                 `UPDATE AuditAssignments SET ActionNote = $1 WHERE AssignmentID = $2`,
                 [actionNote, id]
+            );
+        }
+
+        
+        if (auditManagerNote !== undefined) {
+            await client.query(
+                `UPDATE AuditAssignments SET AuditManagerNote = $1 WHERE AssignmentID = $2`,
+                [auditManagerNote, id]
             );
         }
 
