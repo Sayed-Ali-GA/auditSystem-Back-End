@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../../config/db");
+const verifyToken = require("../../middleware/verify-token");
+const isAdmin = require("../../middleware/isAdmin");
 
 const ROLES = {
     ADMIN: 1,
@@ -9,6 +11,9 @@ const ROLES = {
     AUDITOR: 4,
     AUDIT_MANAGER: 5
 };
+
+// Reads whatever shape verify-token attaches the decoded JWT to
+const getAuthUser = (req) => req.user || req.userData || req.decoded || {};
 
 const RISK_THRESHOLDS = {
     LOW: 90,
@@ -54,7 +59,6 @@ const computeAggregates = (auditPoints) => {
     };
 };
 
-// Creates a notification for a specific user (userId) or broadcast to a role (roleId)
 const createNotification = async (
     client,
     { userId = null, roleId = null, message, type = "info", assignmentId = null }
@@ -66,6 +70,74 @@ const createNotification = async (
         `,
         [userId, roleId, message, type, assignmentId]
     );
+};
+
+// Resolves the User account tied to the Ops Manager assigned to a store (via OracleID)
+const getOpsManagerUserId = async (client, storeSerial) => {
+    const result = await client.query(
+        `
+        SELECT u.UserID
+        FROM Stores s
+        JOIN OpsManagers om ON s.OpsManagerID = om.OpsManagerID
+        JOIN Users u ON u.OracleID = om.OracleID
+        WHERE s.StoreSerial = $1
+        `,
+        [storeSerial]
+    );
+    return result.rows[0]?.userid || null;
+};
+
+// Resolves the User account tied to the Store Manager assigned to a store (via OracleID)
+const getStoreManagerUserId = async (client, storeSerial) => {
+    const result = await client.query(
+        `
+        SELECT u.UserID
+        FROM Stores s
+        JOIN StoreManagers sm ON s.StoreManagerID = sm.StoreManagerID
+        JOIN Users u ON u.OracleID = sm.OracleID
+        WHERE s.StoreSerial = $1
+        `,
+        [storeSerial]
+    );
+    return result.rows[0]?.userid || null;
+};
+
+// Checks whether the requesting user is allowed to view/act on a given audit
+// NOTE: uses BOTH the current Store assignment AND the original AuditAssignment's
+// OpsManagerID, so access isn't lost if the store's Ops Manager assignment changes later.
+const userCanAccessAudit = async (client, authUser, audit) => {
+    const roleId = Number(authUser.RoleID);
+
+    if (roleId === ROLES.ADMIN || roleId === ROLES.AUDIT_MANAGER) return true;
+
+    if (roleId === ROLES.AUDITOR) {
+        return Number(audit.auditorid) === Number(authUser.UserID);
+    }
+
+    if (roleId === ROLES.OPS_MANAGER) {
+        const r = await client.query(
+            `
+            SELECT 1 FROM Stores s JOIN OpsManagers om ON s.OpsManagerID = om.OpsManagerID
+            WHERE s.StoreSerial = $1 AND om.OracleID = $2
+            UNION
+            SELECT 1 FROM AuditAssignments aa2 JOIN OpsManagers om2 ON aa2.OpsManagerID = om2.OpsManagerID
+            WHERE aa2.AssignmentID = $3 AND om2.OracleID = $2
+            `,
+            [audit.storeserial, authUser.OracleID, audit.assignmentid || null]
+        );
+        return r.rows.length > 0;
+    }
+
+    if (roleId === ROLES.STORE_MANAGER) {
+        const r = await client.query(
+            `SELECT 1 FROM Stores s JOIN StoreManagers sm ON s.StoreManagerID = sm.StoreManagerID
+             WHERE s.StoreSerial = $1 AND sm.OracleID = $2`,
+            [audit.storeserial, authUser.OracleID]
+        );
+        return r.rows.length > 0;
+    }
+
+    return false;
 };
 
 const AUDIT_SELECT_BASE = `
@@ -80,8 +152,8 @@ const AUDIT_SELECT_BASE = `
         aa.RiskLevel,
 
         aa.ActionNote,
-        aa.RevisionReason,
         aa.RejectionReason,
+        aa.RevisionReason,
 
         s.StoreSerial,
         s.StoreCode,
@@ -156,13 +228,43 @@ const AUDIT_GROUP_BY = `
     u.UserName
 `;
 
-// GET ALL AUDITS (every role sees every status — filtering happens in the UI)
-router.get("/Audits", async (req, res) => {
+// GET ALL AUDITS — scoped by role:
+// Admin / Audit Manager  -> everything
+// Ops Manager            -> only stores they manage
+// Store Manager          -> only stores they manage
+// Auditor                -> only audits they created
+router.get("/Audits", verifyToken, async (req, res) => {
     try {
         const { storeSerial } = req.query;
+        const authUser = getAuthUser(req);
+        const roleId = Number(authUser.RoleID);
 
-        const whereClause = storeSerial ? `WHERE aa.StoreSerial = $1` : "";
-        const params = storeSerial ? [storeSerial] : [];
+        const conditions = [];
+        const params = [];
+
+        if (storeSerial) {
+            params.push(storeSerial);
+            conditions.push(`aa.StoreSerial = $${params.length}`);
+        }
+
+        if (roleId === ROLES.OPS_MANAGER) {
+            params.push(authUser.OracleID);
+            conditions.push(
+                `s.OpsManagerID IN (SELECT OpsManagerID FROM OpsManagers WHERE OracleID = $${params.length})`
+            );
+        } else if (roleId === ROLES.STORE_MANAGER) {
+            params.push(authUser.OracleID);
+            conditions.push(
+                `s.StoreManagerID IN (SELECT StoreManagerID FROM StoreManagers WHERE OracleID = $${params.length})`
+            );
+        } else if (roleId === ROLES.AUDITOR) {
+            params.push(authUser.UserID);
+            conditions.push(`aa.AuditorID = $${params.length}`);
+        }
+        // Admin & Audit Manager -> no extra condition, see everything
+
+        const whereClause =
+            conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
         const result = await pool.query(
             `${AUDIT_SELECT_BASE} ${whereClause} ${AUDIT_GROUP_BY} ORDER BY aa.AuditDate DESC`,
@@ -177,9 +279,10 @@ router.get("/Audits", async (req, res) => {
 });
 
 
-router.get("/Audits/:id", async (req, res) => {
+router.get("/Audits/:id", verifyToken, async (req, res) => {
     try {
         const { id } = req.params;
+        const authUser = getAuthUser(req);
 
         const result = await pool.query(
             `${AUDIT_SELECT_BASE} WHERE aa.AssignmentID = $1 ${AUDIT_GROUP_BY}`,
@@ -190,7 +293,16 @@ router.get("/Audits/:id", async (req, res) => {
             return res.status(404).json({ message: "Audit not found" });
         }
 
-        res.json(result.rows[0]);
+        const audit = result.rows[0];
+
+        const hasAccess = await userCanAccessAudit(pool, authUser, audit);
+        if (!hasAccess) {
+            return res
+                .status(403)
+                .json({ message: "You do not have access to this audit" });
+        }
+
+        res.json(audit);
     } catch (error) {
         console.log(error);
         res.status(500).json({ message: "Error getting audit" });
@@ -203,11 +315,23 @@ const ALLOWED_STATUSES = [
     "Needs Revision",
     "Rejected",
     "Forwarded",
+    "Sent to Store",
     "Completed"
 ];
 
-// CREATE AUDIT — status can be 'Draft' (auditor saving progress) or 'Submitted' (final)
-router.post("/Audits", async (req, res) => {
+// Who is allowed to set each status
+const STATUS_PERMISSIONS = {
+    Draft: [ROLES.AUDITOR, ROLES.ADMIN],
+    Submitted: [ROLES.AUDITOR, ROLES.ADMIN],
+    "Needs Revision": [ROLES.AUDIT_MANAGER, ROLES.ADMIN],
+    Rejected: [ROLES.AUDIT_MANAGER, ROLES.ADMIN],
+    Forwarded: [ROLES.AUDIT_MANAGER, ROLES.ADMIN],
+    "Sent to Store": [ROLES.OPS_MANAGER, ROLES.ADMIN],
+    Completed: [ROLES.STORE_MANAGER, ROLES.ADMIN]
+};
+
+// CREATE AUDIT
+router.post("/Audits", verifyToken, async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
@@ -223,10 +347,18 @@ router.post("/Audits", async (req, res) => {
             status
         } = req.body;
 
-        if (!storeSerial || !opsManagerID || !auditorID) {
+      if (!storeSerial || !opsManagerID || !auditorID) {
             throw new Error(
                 "storeSerial, opsManagerID and auditorID are required"
             );
+        }
+
+        const authUser = getAuthUser(req);
+        if (
+            Number(authUser.RoleID) !== ROLES.ADMIN &&
+            Number(auditorID) !== Number(authUser.UserID)
+        ) {
+            throw new Error("You can only create audits under your own account.");
         }
 
         if (!Array.isArray(auditPoints) || auditPoints.length === 0) {
@@ -298,7 +430,6 @@ router.post("/Audits", async (req, res) => {
             );
         }
 
-        // Notify Audit Managers only on a real submission, not on drafts
         if (finalStatus === "Submitted") {
             const storeInfo = await client.query(
                 `SELECT StoreCode FROM Stores WHERE StoreSerial = $1`,
@@ -336,12 +467,13 @@ router.post("/Audits", async (req, res) => {
 });
 
 
-router.put("/Audits/:id", async (req, res) => {
+router.put("/Audits/:id", verifyToken, async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
 
         const { id } = req.params;
+        const authUser = getAuthUser(req);
         const {
             status,
             evaluations,
@@ -360,6 +492,16 @@ router.put("/Audits/:id", async (req, res) => {
             });
         }
 
+        if (status !== undefined) {
+            const allowedRoles = STATUS_PERMISSIONS[status] || [];
+            if (!allowedRoles.includes(Number(authUser.RoleID))) {
+                await client.query("ROLLBACK");
+                return res
+                    .status(403)
+                    .json({ message: "You are not allowed to set this status." });
+            }
+        }
+
         const existing = await client.query(
             `SELECT AssignmentID, AuditorID, StoreSerial, Status FROM AuditAssignments WHERE AssignmentID = $1`,
             [id]
@@ -372,8 +514,21 @@ router.put("/Audits/:id", async (req, res) => {
 
         const previousStatus = existing.rows[0].status;
         const auditorId = existing.rows[0].auditorid;
+        const storeSerial = existing.rows[0].storeserial;
 
-        // 1. Draft header fields (Auditor editing cashier/date while saving progress)
+        const hasAccess = await userCanAccessAudit(client, authUser, {
+            auditorid: auditorId,
+            storeserial: storeSerial,
+            assignmentid: id
+        });
+        if (!hasAccess) {
+            await client.query("ROLLBACK");
+            return res
+                .status(403)
+                .json({ message: "You do not have access to this audit" });
+        }
+
+        // 1. Draft header fields
         if (cashierName !== undefined || auditDate !== undefined) {
             await client.query(
                 `
@@ -394,9 +549,7 @@ router.put("/Audits/:id", async (req, res) => {
             );
         }
 
-        // 2. Evaluations upsert — matched by (AssignmentID, AuditPointID), so it works
-        //    whether the row already exists or is being created for the first time
-        //    (e.g. a new audit point added after the draft was started).
+        // 2. Evaluations upsert
         if (Array.isArray(evaluations) && evaluations.length > 0) {
             for (const ev of evaluations) {
                 if (!ev.AuditPointID) continue;
@@ -462,7 +615,9 @@ router.put("/Audits/:id", async (req, res) => {
             );
         }
 
-        // 3. Ops Manager general note
+        // 3. General comment field (used by both Audit Manager context notes
+        //    and — more commonly now — the Ops Manager's comment before
+        //    routing the audit to the Store Manager)
         if (actionNote !== undefined) {
             await client.query(
                 `UPDATE AuditAssignments SET ActionNote = $1 WHERE AssignmentID = $2`,
@@ -470,24 +625,18 @@ router.put("/Audits/:id", async (req, res) => {
             );
         }
 
-       // 4. Revision reason
+        // 4. Revision reason — saves the reason and clears any prior rejection reason
         if (revisionReason !== undefined) {
             await client.query(
-                `
-                UPDATE AuditAssignments
-                SET
-                    RevisionReason = $1,
-                    RejectionReason = NULL
-                WHERE AssignmentID = $2
-                `,
+                `UPDATE AuditAssignments SET RevisionReason = $1, RejectionReason = NULL WHERE AssignmentID = $2`,
                 [revisionReason, id]
             );
         }
 
-        // 5. Rejection reason
+        // 5. Rejection reason — saves the reason and clears any prior revision reason
         if (rejectionReason !== undefined) {
             await client.query(
-                `UPDATE AuditAssignments SET RejectionReason = $1 WHERE AssignmentID = $2`,
+                `UPDATE AuditAssignments SET RejectionReason = $1, RevisionReason = NULL WHERE AssignmentID = $2`,
                 [rejectionReason, id]
             );
         }
@@ -517,9 +666,20 @@ router.put("/Audits/:id", async (req, res) => {
                     assignmentId: id
                 });
             } else if (status === "Forwarded") {
+                const opsUserId = await getOpsManagerUserId(client, storeSerial);
                 await createNotification(client, {
-                    roleId: ROLES.OPS_MANAGER,
-                    message: `An audit has been approved and forwarded for action.`,
+                    userId: opsUserId,
+                    roleId: opsUserId ? null : ROLES.OPS_MANAGER,
+                    message: `An audit has been approved and forwarded to you for review.`,
+                    type: "info",
+                    assignmentId: id
+                });
+            } else if (status === "Sent to Store") {
+                const smUserId = await getStoreManagerUserId(client, storeSerial);
+                await createNotification(client, {
+                    userId: smUserId,
+                    roleId: smUserId ? null : ROLES.STORE_MANAGER,
+                    message: `An audit has been sent to you — please add the action plan and target date.`,
                     type: "info",
                     assignmentId: id
                 });
@@ -560,8 +720,8 @@ router.put("/Audits/:id", async (req, res) => {
     }
 });
 
-// DELETE AUDIT
-router.delete("/Audits/:id", async (req, res) => {
+// DELETE AUDIT — Admin only
+router.delete("/Audits/:id", verifyToken, isAdmin, async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");

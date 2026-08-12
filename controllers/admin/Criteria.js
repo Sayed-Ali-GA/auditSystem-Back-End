@@ -1,12 +1,10 @@
 const express = require("express");
-
 const router = express.Router();
 const pool = require("../../config/db");
+const verifyToken = require("../../middleware/verify-token");
+const isAdmin = require("../../middleware/isAdmin");
 
-
-
-
-router.get("/MajorCriteria", async (req, res) => {
+router.get("/MajorCriteria", verifyToken, async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM MajorCriteria");
     res.json(result.rows);
@@ -14,50 +12,32 @@ router.get("/MajorCriteria", async (req, res) => {
     console.error(err);
     res.status(500).json({ error: "Something went wrong" });
   }
-});     
+});
 
-
-
-router.post("/MajorCriteria", async (req, res) => {
-
+router.post("/MajorCriteria", verifyToken, isAdmin, async (req, res) => {
   const { majorcriterianame } = req.body;
-
   try {
     const result = await pool.query(
-      `
-      INSERT INTO MajorCriteria (MajorCriteriaName)
-      VALUES ($1)
-      RETURNING *
-      `,
+      `INSERT INTO MajorCriteria (MajorCriteriaName) VALUES ($1) RETURNING *`,
       [majorcriterianame]
     );
-
     res.status(201).json(result.rows[0]);
-
   } catch (err) {
     console.error(err);
-
-    res.status(500).json({
-      error: err.message
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 
-
-
-router.delete("/MajorCriteria/:id", async (req, res) => {
+router.delete("/MajorCriteria/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
-
   try {
     const result = await pool.query(
       "DELETE FROM MajorCriteria WHERE MajorCriteriaID = $1 RETURNING *",
       [id]
     );
-
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Criteria not found" });
     }
-
     res.status(200).json({
       message: "Criteria deleted successfully",
       criteria: result.rows[0],
@@ -71,26 +51,17 @@ router.delete("/MajorCriteria/:id", async (req, res) => {
   }
 });
 
-
-router.put("/MajorCriteria/:id", async (req, res) => {
+router.put("/MajorCriteria/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
   const { majorcriterianame } = req.body;
-
   try {
     const result = await pool.query(
-      `
-      UPDATE MajorCriteria
-      SET MajorCriteriaName = $1
-      WHERE MajorCriteriaID = $2
-      RETURNING *
-      `,
+      `UPDATE MajorCriteria SET MajorCriteriaName = $1 WHERE MajorCriteriaID = $2 RETURNING *`,
       [majorcriterianame, id]
     );
-
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Criteria not found" });
     }
-
     res.status(200).json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -99,7 +70,6 @@ router.put("/MajorCriteria/:id", async (req, res) => {
       details: err.message,
     });
   }
-}); 
-
+});
 
 module.exports = router;

@@ -1,11 +1,10 @@
 const express = require("express");
-
 const router = express.Router();
 const pool = require("../../config/db");
+const verifyToken = require("../../middleware/verify-token");
+const isAdmin = require("../../middleware/isAdmin");
 
-
-
-router.get("/StoreManagers", async (req, res) => {
+router.get("/StoreManagers", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -17,13 +16,10 @@ router.get("/StoreManagers", async (req, res) => {
         l.LocationID,
         l.LocationName
       FROM StoreManagers sm
-      LEFT JOIN Brands b
-        ON sm.BrandID = b.BrandID
-      LEFT JOIN Locations l
-        ON sm.LocationID = l.LocationID
+      LEFT JOIN Brands b ON sm.BrandID = b.BrandID
+      LEFT JOIN Locations l ON sm.LocationID = l.LocationID
       ORDER BY sm.StoreManagerID;
     `);
-
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -31,92 +27,45 @@ router.get("/StoreManagers", async (req, res) => {
   }
 });
 
-
-
-
-
-router.post("/StoreManagers", async (req, res) => {
+router.post("/StoreManagers", verifyToken, isAdmin, async (req, res) => {
   const { StoreManagerName, OracleID, BrandID, LocationID } = req.body;
-
   try {
-
     const insert = await pool.query(
-      `
-      INSERT INTO StoreManagers
-      (
-        StoreManagerName,
-        oracleid,
-        BrandID,
-        LocationID
-      )
-      VALUES ($1,$2,$3,$4)
-      RETURNING StoreManagerID
-      `,
-      [
-        StoreManagerName,
-        OracleID,
-        BrandID,
-        LocationID
-      ]
+      `INSERT INTO StoreManagers (StoreManagerName, oracleid, BrandID, LocationID)
+       VALUES ($1,$2,$3,$4) RETURNING StoreManagerID`,
+      [StoreManagerName, OracleID, BrandID, LocationID]
     );
-
 
     const result = await pool.query(
       `
       SELECT
-        sm.StoreManagerID,
-        sm.StoreManagerName,
-        sm.OracleID,
-        b.BrandID,
-        b.BrandName,
-        l.LocationID,
-        l.LocationName
-
+        sm.StoreManagerID, sm.StoreManagerName, sm.OracleID,
+        b.BrandID, b.BrandName, l.LocationID, l.LocationName
       FROM StoreManagers sm
-
-      LEFT JOIN Brands b
-      ON sm.BrandID = b.BrandID
-
-      LEFT JOIN Locations l
-      ON sm.LocationID = l.LocationID
-
+      LEFT JOIN Brands b ON sm.BrandID = b.BrandID
+      LEFT JOIN Locations l ON sm.LocationID = l.LocationID
       WHERE sm.StoreManagerID = $1
       `,
-      [
-        insert.rows[0].storemanagerid
-      ]
+      [insert.rows[0].storemanagerid]
     );
 
-
     res.status(201).json(result.rows[0]);
-
-
   } catch (err) {
-
     console.error(err);
-
-    res.status(500).json({
-      error: err.message
-    });
-
+    res.status(500).json({ error: err.message });
   }
 });
 
-
-
-router.delete("/StoreManagers/:id", async (req, res) => {
+router.delete("/StoreManagers/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
-
   try {
     const result = await pool.query(
       "DELETE FROM StoreManagers WHERE storemanagerid = $1 RETURNING *",
       [id]
     );
-
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Store Manager not found" });
     }
-
     res.status(200).json({
       message: "Store Manager deleted successfully",
       LocationName: result.rows[0],
@@ -130,67 +79,35 @@ router.delete("/StoreManagers/:id", async (req, res) => {
   }
 });
 
-
-
-
-
-router.put("/StoreManagers/:id", async (req, res) => {
+router.put("/StoreManagers/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
   const { StoreManagerName, OracleID, BrandID, LocationID } = req.body;
-
   try {
     await pool.query(
-      `
-      UPDATE StoreManagers
-      SET StoreManagerName = $1,
-          OracleID = $2,
-          BrandID = $3,
-          LocationID = $4
-      WHERE StoreManagerID = $5
-      `,
-      [
-        StoreManagerName,
-        OracleID,
-        BrandID,
-        LocationID,
-        id
-      ]
+      `UPDATE StoreManagers
+       SET StoreManagerName = $1, OracleID = $2, BrandID = $3, LocationID = $4
+       WHERE StoreManagerID = $5`,
+      [StoreManagerName, OracleID, BrandID, LocationID, id]
     );
-
 
     const result = await pool.query(
       `
       SELECT
-        sm.StoreManagerID,
-        sm.StoreManagerName,
-        sm.OracleID,
-        b.BrandID,
-        b.BrandName,
-        l.LocationID,
-        l.LocationName
-
+        sm.StoreManagerID, sm.StoreManagerName, sm.OracleID,
+        b.BrandID, b.BrandName, l.LocationID, l.LocationName
       FROM StoreManagers sm
-
-      LEFT JOIN Brands b
-        ON sm.BrandID = b.BrandID
-
-      LEFT JOIN Locations l
-        ON sm.LocationID = l.LocationID
-
+      LEFT JOIN Brands b ON sm.BrandID = b.BrandID
+      LEFT JOIN Locations l ON sm.LocationID = l.LocationID
       WHERE sm.StoreManagerID = $1
       `,
       [id]
     );
 
     res.status(200).json(result.rows[0]);
-
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      error: err.message
-    });
+    res.status(500).json({ error: err.message });
   }
 });
-
 
 module.exports = router;

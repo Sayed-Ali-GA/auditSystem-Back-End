@@ -1,21 +1,20 @@
 const express = require("express");
-
 const router = express.Router();
 const pool = require("../../config/db");
+const verifyToken = require("../../middleware/verify-token");
+const isAdmin = require("../../middleware/isAdmin");
 
-
-router.get("/Location", async (req, res) => {
+router.get("/Location", verifyToken, async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM Locations");                  
+    const result = await pool.query("SELECT * FROM Locations");
     res.json(result.rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Something went wrong" });
-  }         
-});     
+  }
+});
 
-
-router.post("/Location", async (req, res) => {
+router.post("/Location", verifyToken, isAdmin, async (req, res) => {
   const { LocationName } = req.body;
   try {
     const result = await pool.query(
@@ -25,30 +24,20 @@ router.post("/Location", async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Something went wrong",error: err.message});
+    res.status(500).json({ error: err.message });
   }
-}); 
+});
 
-
-
-
-
-
-
-
-router.delete("/Location/:id", async (req, res) => {
+router.delete("/Location/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
-
   try {
     const result = await pool.query(
       "DELETE FROM Locations WHERE locationid = $1 RETURNING *",
       [id]
     );
-
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Location not found" });
     }
-
     res.status(200).json({
       message: "Location deleted successfully",
       LocationName: result.rows[0],
@@ -62,23 +51,18 @@ router.delete("/Location/:id", async (req, res) => {
   }
 });
 
-
-router.put("/Location/:id", async (req, res) => {
+router.put("/Location/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
   const { LocationName } = req.body;
-
   try {
     const result = await pool.query(
       "UPDATE Locations SET LocationName = $1 WHERE locationid = $2 RETURNING *",
       [LocationName, id]
     );
-
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Location not found" });
     }
-
-        res.status(200).json(result.rows[0]);
-   
+    res.status(200).json(result.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({
@@ -87,6 +71,5 @@ router.put("/Location/:id", async (req, res) => {
     });
   }
 });
-
 
 module.exports = router;
