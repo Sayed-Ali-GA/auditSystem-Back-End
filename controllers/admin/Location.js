@@ -4,9 +4,15 @@ const pool = require("../../config/db");
 const verifyToken = require("../../middleware/verify-token");
 const isAdmin = require("../../middleware/isAdmin");
 
-router.get("/Location", verifyToken, async (req, res) => {
-  try {
-    const result = await pool.query("SELECT * FROM Locations");
+
+
+ router.get("/Location", verifyToken, async (req, res) => {
+   try {
+     const includeInactive = req.query.includeInactive === "true";
+     const query = includeInactive
+       ? "SELECT * FROM Locations ORDER BY LocationID"
+       : "SELECT * FROM Locations WHERE IsActive = TRUE ORDER BY LocationID";
+     const result = await pool.query(query);
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -14,11 +20,13 @@ router.get("/Location", verifyToken, async (req, res) => {
   }
 });
 
+
+
 router.post("/Location", verifyToken, isAdmin, async (req, res) => {
   const { LocationName } = req.body;
   try {
     const result = await pool.query(
-      "INSERT INTO Locations (LocationName) VALUES ($1) RETURNING *",
+       "INSERT INTO Locations (LocationName, IsActive) VALUES ($1, TRUE) RETURNING *",
       [LocationName]
     );
     res.status(201).json(result.rows[0]);
@@ -32,14 +40,14 @@ router.delete("/Location/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query(
-      "DELETE FROM Locations WHERE locationid = $1 RETURNING *",
+      "UPDATE Locations SET IsActive = FALSE WHERE locationid = $1 RETURNING *",
       [id]
     );
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Location not found" });
     }
     res.status(200).json({
-      message: "Location deleted successfully",
+       message: "Location archived successfully",
       LocationName: result.rows[0],
     });
   } catch (err) {
@@ -69,6 +77,26 @@ router.put("/Location/:id", verifyToken, isAdmin, async (req, res) => {
       error: "Something went wrong",
       details: err.message,
     });
+  }
+});
+
+
+
+
+router.patch("/Location/:id/restore", verifyToken, isAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      "UPDATE Locations SET IsActive = TRUE WHERE locationid = $1 RETURNING *",
+      [id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Location not found" });
+    }
+    res.status(200).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
