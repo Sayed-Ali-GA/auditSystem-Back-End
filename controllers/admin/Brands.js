@@ -4,9 +4,16 @@ const pool = require("../../config/db");
 const verifyToken = require("../../middleware/verify-token");
 const isAdmin = require("../../middleware/isAdmin");
 
+// GET — active by default; ?includeInactive=true shows archived too
 router.get("/brands", verifyToken, async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM Brands");
+    const includeInactive = req.query.includeInactive === "true";
+
+    const query = includeInactive
+      ? "SELECT * FROM Brands ORDER BY BrandID"
+      : "SELECT * FROM Brands WHERE IsActive = TRUE ORDER BY BrandID";
+
+    const result = await pool.query(query);
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -18,7 +25,7 @@ router.post("/brands", verifyToken, isAdmin, async (req, res) => {
   const { BrandName } = req.body;
   try {
     const result = await pool.query(
-      "INSERT INTO Brands (BrandName) VALUES ($1) RETURNING *",
+      "INSERT INTO Brands (BrandName, IsActive) VALUES ($1, TRUE) RETURNING *",
       [BrandName]
     );
     res.status(201).json(result.rows[0]);
@@ -28,18 +35,21 @@ router.post("/brands", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
+// SOFT DELETE — archives instead of physically removing
 router.delete("/brands/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query(
-      "DELETE FROM Brands WHERE BrandID = $1 RETURNING *",
+      "UPDATE Brands SET IsActive = FALSE WHERE BrandID = $1 RETURNING *",
       [id]
     );
+
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Brand not found" });
     }
+
     res.status(200).json({
-      message: "Brand deleted successfully",
+      message: "Brand archived successfully",
       brand: result.rows[0],
     });
   } catch (err) {
@@ -48,6 +58,26 @@ router.delete("/brands/:id", verifyToken, isAdmin, async (req, res) => {
       error: "Something went wrong",
       details: err.message,
     });
+  }
+});
+
+// RESTORE — bring an archived brand back
+router.patch("/brands/:id/restore", verifyToken, isAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      "UPDATE Brands SET IsActive = TRUE WHERE BrandID = $1 RETURNING *",
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Brand not found" });
+    }
+
+    res.status(200).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
