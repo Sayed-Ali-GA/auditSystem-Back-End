@@ -5,26 +5,11 @@ const pool = require("../../config/db");
 const verifyToken = require("../../middleware/verify-token");
 const isAdmin = require("../../middleware/isAdmin");
 
-// =====================================================
-// GET ALL STORES
-// =====================================================
-// Default:
-//      GET /Stores
-//      -> Active stores only
-//
-// Archived:
-//      GET /Stores?includeInactive=true
-//      -> Active + Archived
-// =====================================================
-router.get("/Stores", verifyToken, async (req, res) => {
-  try {
-    const includeInactive = req.query.includeInactive === "true";
-
-    const result = await pool.query(
-      `
+const STORE_SELECT = `
       SELECT
         s.StoreSerial,
         s.StoreCode,
+        s.Email,
         s.IsActive AS IsActive,
 
         b.BrandID,
@@ -52,9 +37,19 @@ router.get("/Stores", verifyToken, async (req, res) => {
 
       LEFT JOIN StoreManagers sm
         ON s.StoreManagerID = sm.StoreManagerID
+`;
 
+// =====================================================
+// GET ALL STORES
+// =====================================================
+router.get("/Stores", verifyToken, async (req, res) => {
+  try {
+    const includeInactive = req.query.includeInactive === "true";
+
+    const result = await pool.query(
+      `
+      ${STORE_SELECT}
       ${includeInactive ? "" : "WHERE s.IsActive = TRUE"}
-
       ORDER BY s.StoreSerial;
       `,
     );
@@ -74,64 +69,45 @@ router.get("/Stores", verifyToken, async (req, res) => {
 // CREATE STORE
 // =====================================================
 router.post("/Stores", verifyToken, isAdmin, async (req, res) => {
-  const { StoreCode, BrandID, LocationID, OpsManagerID, StoreManagerID } =
-    req.body;
+  const {
+    StoreCode,
+    Email,
+    BrandID,
+    LocationID,
+    OpsManagerID,
+    StoreManagerID,
+  } = req.body;
 
   try {
     const result = await pool.query(
       `
         INSERT INTO Stores (
           StoreCode,
+          Email,
           BrandID,
           LocationID,
           OpsManagerID,
           StoreManagerID,
           IsActive
         )
-        VALUES ($1, $2, $3, $4, $5, TRUE)
+        VALUES ($1, $2, $3, $4, $5, $6, TRUE)
 
         RETURNING StoreSerial
         `,
-      [StoreCode, BrandID, LocationID, OpsManagerID, StoreManagerID],
+      [
+        StoreCode,
+        Email || null,
+        BrandID,
+        LocationID,
+        OpsManagerID,
+        StoreManagerID,
+      ],
     );
 
     const storeSerial = result.rows[0].storeserial;
 
     const newStore = await pool.query(
-      `
-        SELECT
-          s.StoreSerial,
-          s.StoreCode,
-          s.IsActive AS IsActive,
-
-          b.BrandID,
-          b.BrandName,
-
-          l.LocationID,
-          l.LocationName,
-
-          o.OpsManagerID,
-          o.OpsManagerName,
-
-          sm.StoreManagerID,
-          sm.StoreManagerName
-
-        FROM Stores s
-
-        LEFT JOIN Brands b
-          ON s.BrandID = b.BrandID
-
-        LEFT JOIN Locations l
-          ON s.LocationID = l.LocationID
-
-        LEFT JOIN OpsManagers o
-          ON s.OpsManagerID = o.OpsManagerID
-
-        LEFT JOIN StoreManagers sm
-          ON s.StoreManagerID = sm.StoreManagerID
-
-        WHERE s.StoreSerial = $1
-        `,
+      `${STORE_SELECT} WHERE s.StoreSerial = $1`,
       [storeSerial],
     );
 
@@ -148,12 +124,6 @@ router.post("/Stores", verifyToken, isAdmin, async (req, res) => {
 // =====================================================
 // ARCHIVE STORE
 // =====================================================
-// This DOES NOT delete the store.
-// It only sets IsActive = FALSE.
-//
-// This is important because Audits may reference this
-// store and must remain for historical records.
-// =====================================================
 router.delete("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
 
@@ -161,11 +131,8 @@ router.delete("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
     const result = await pool.query(
       `
         UPDATE Stores
-
         SET IsActive = FALSE
-
         WHERE StoreSerial = $1
-
         RETURNING StoreSerial, StoreCode, IsActive
         `,
       [id],
@@ -197,26 +164,38 @@ router.delete("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
 router.put("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
 
-  const { StoreCode, BrandID, LocationID, OpsManagerID, StoreManagerID } =
-    req.body;
+  const {
+    StoreCode,
+    Email,
+    BrandID,
+    LocationID,
+    OpsManagerID,
+    StoreManagerID,
+  } = req.body;
 
   try {
     const updateResult = await pool.query(
       `
         UPDATE Stores
-
         SET
           StoreCode = $1,
-          BrandID = $2,
-          LocationID = $3,
-          OpsManagerID = $4,
-          StoreManagerID = $5
-
-        WHERE StoreSerial = $6
-
+          Email = $2,
+          BrandID = $3,
+          LocationID = $4,
+          OpsManagerID = $5,
+          StoreManagerID = $6
+        WHERE StoreSerial = $7
         RETURNING StoreSerial
         `,
-      [StoreCode, BrandID, LocationID, OpsManagerID, StoreManagerID, id],
+      [
+        StoreCode,
+        Email || null,
+        BrandID,
+        LocationID,
+        OpsManagerID,
+        StoreManagerID,
+        id,
+      ],
     );
 
     if (updateResult.rowCount === 0) {
@@ -226,40 +205,7 @@ router.put("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
     }
 
     const updatedStore = await pool.query(
-      `
-          SELECT
-            s.StoreSerial,
-            s.StoreCode,
-            s.IsActive AS IsActive,
-
-            b.BrandID,
-            b.BrandName,
-
-            l.LocationID,
-            l.LocationName,
-
-            o.OpsManagerID,
-            o.OpsManagerName,
-
-            sm.StoreManagerID,
-            sm.StoreManagerName
-
-          FROM Stores s
-
-          LEFT JOIN Brands b
-            ON s.BrandID = b.BrandID
-
-          LEFT JOIN Locations l
-            ON s.LocationID = l.LocationID
-
-          LEFT JOIN OpsManagers o
-            ON s.OpsManagerID = o.OpsManagerID
-
-          LEFT JOIN StoreManagers sm
-            ON s.StoreManagerID = sm.StoreManagerID
-
-          WHERE s.StoreSerial = $1
-          `,
+      `${STORE_SELECT} WHERE s.StoreSerial = $1`,
       [id],
     );
 
@@ -276,8 +222,6 @@ router.put("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
 // =====================================================
 // RESTORE STORE
 // =====================================================
-// Sets IsActive = TRUE
-// =====================================================
 router.patch("/Stores/:id/restore", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
 
@@ -285,11 +229,8 @@ router.patch("/Stores/:id/restore", verifyToken, isAdmin, async (req, res) => {
     const updateResult = await pool.query(
       `
         UPDATE Stores
-
         SET IsActive = TRUE
-
         WHERE StoreSerial = $1
-
         RETURNING StoreSerial
         `,
       [id],
@@ -301,43 +242,8 @@ router.patch("/Stores/:id/restore", verifyToken, isAdmin, async (req, res) => {
       });
     }
 
-    // Return the same complete structure
-    // used by GET /Stores
     const restoredStore = await pool.query(
-      `
-          SELECT
-            s.StoreSerial,
-            s.StoreCode,
-            s.IsActive AS IsActive,
-
-            b.BrandID,
-            b.BrandName,
-
-            l.LocationID,
-            l.LocationName,
-
-            o.OpsManagerID,
-            o.OpsManagerName,
-
-            sm.StoreManagerID,
-            sm.StoreManagerName
-
-          FROM Stores s
-
-          LEFT JOIN Brands b
-            ON s.BrandID = b.BrandID
-
-          LEFT JOIN Locations l
-            ON s.LocationID = l.LocationID
-
-          LEFT JOIN OpsManagers o
-            ON s.OpsManagerID = o.OpsManagerID
-
-          LEFT JOIN StoreManagers sm
-            ON s.StoreManagerID = sm.StoreManagerID
-
-          WHERE s.StoreSerial = $1
-          `,
+      `${STORE_SELECT} WHERE s.StoreSerial = $1`,
       [id],
     );
 
