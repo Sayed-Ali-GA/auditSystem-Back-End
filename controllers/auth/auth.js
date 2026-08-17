@@ -7,10 +7,13 @@ const pool = require("../../config/db");
 const verifyToken = require("../../middleware/verify-token");
 const isAdmin = require("../../middleware/isAdmin");
 
+const { sendMail } = require("../../config/mailer");
+const { welcomeEmailHtml } = require("../../services/emailTemplates");
+
 
 // CREATE USER
 router.post("/createUser",verifyToken,isAdmin,async(req,res)=>{
-    const {OracleID,UserName,Password,LocationID,RoleID}=req.body;
+    const {OracleID,UserName,Password,LocationID,RoleID,Email}=req.body;
     try{
         if(!OracleID || !UserName || !Password || !LocationID || !RoleID){
             return res.status(400).json({
@@ -43,20 +46,39 @@ router.post("/createUser",verifyToken,isAdmin,async(req,res)=>{
                 UserName,
                 Password,
                 LocationID,
-                RoleID
+                RoleID,
+                Email
             )
-            VALUES($1,$2,$3,$4,$5)
-            RETURNING UserID,OracleID,UserName,LocationID,RoleID;
+            VALUES($1,$2,$3,$4,$5,$6)
+            RETURNING UserID,OracleID,UserName,LocationID,RoleID,Email;
         `,
         [
             OracleID,
             UserName,
             hashedPassword,
             LocationID,
-            RoleID
+            RoleID,
+            Email || null
         ]);
 
-        res.status(201).json(result.rows[0]);
+        const newUser = result.rows[0];
+
+        // Fire-and-forget welcome email — never blocks the API response.
+        if (Email) {
+            sendMail({
+                to: Email,
+                subject: "Your Audit System account has been created",
+                html: welcomeEmailHtml({
+                    userName: UserName,
+                    oracleId: OracleID,
+                    password: Password, // plain text, shown once before hashing
+                    roleId: RoleID,
+                    loginUrl: process.env.APP_LOGIN_URL || null,
+                }),
+            }).catch((err) => console.log("Welcome email failed:", err.message));
+        }
+
+        res.status(201).json(newUser);
     }catch(error){
         console.error(error);
         res.status(500).json({
@@ -158,6 +180,7 @@ router.get("/",verifyToken,isAdmin,async(req,res)=>{
             u.UserID,
             u.OracleID,
             u.UserName,
+            u.Email,
             u.LocationID,
             l.LocationName,
             u.RoleID,
@@ -189,7 +212,7 @@ router.get("/",verifyToken,isAdmin,async(req,res)=>{
 // UPDATE USER
 router.put("/:id",verifyToken,isAdmin,async(req,res)=>{
     const {id}=req.params;
-    const {UserName,LocationID,RoleID}=req.body;
+    const {UserName,LocationID,RoleID,Email}=req.body;
 try{
         // Prevent promoting any user to Admin via update
         if(Number(RoleID)===1){
@@ -220,14 +243,16 @@ try{
             SET
                 UserName=COALESCE($1,UserName),
                 LocationID=COALESCE($2,LocationID),
-                RoleID=COALESCE($3,RoleID)
-            WHERE UserID=$4
-            RETURNING UserID,UserName,LocationID,RoleID;
+                RoleID=COALESCE($3,RoleID),
+                Email=COALESCE($4,Email)
+            WHERE UserID=$5
+            RETURNING UserID,UserName,LocationID,RoleID,Email;
         `,
         [
             UserName,
             LocationID,
             RoleID,
+            Email,
             id
         ]);
         res.json(result.rows[0]);

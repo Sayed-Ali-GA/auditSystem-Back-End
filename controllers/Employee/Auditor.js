@@ -4,6 +4,10 @@ const pool = require("../../config/db");
 const verifyToken = require("../../middleware/verify-token");
 const isAdmin = require("../../middleware/isAdmin");
 
+const { sendMail } = require("../../config/mailer");
+const { auditUpdateEmailHtml } = require("../../services/emailTemplates");
+const { generateAuditPdfBuffer } = require("../../services/auditPdf");
+
 const ROLES = {
   ADMIN: 1,
   OPS_MANAGER: 2,
@@ -16,22 +20,22 @@ const ROLES = {
 const getAuthUser = (req) => req.user || req.userData || req.decoded || {};
 
 const RISK_THRESHOLDS = {
-  LOW: 90,
-  MODERATE: 75,
+  LOW: 90,      // >= 90  => SATISFACTORY
+  MODERATE: 70, // > 70 and < 90 => NEEDS IMPROVEMENT
 };
 
 const getRiskLevel = (finalPercentage) => {
   if (finalPercentage === null) return null;
 
   if (finalPercentage >= RISK_THRESHOLDS.LOW) {
-    return "Low";
+    return "Low"; // SATISFACTORY
   }
 
-  if (finalPercentage >= RISK_THRESHOLDS.MODERATE) {
-    return "Moderate";
+  if (finalPercentage > RISK_THRESHOLDS.MODERATE) {
+    return "Moderate"; // NEEDS IMPROVEMENT
   }
 
-  return "High";
+  return "High"; // <= 70 => UNSATISFACTORY
 };
 
 const computeAggregates = (auditPoints) => {
@@ -75,6 +79,143 @@ const createNotification = async (
     `,
     [userId, roleId, message, type, assignmentId],
   );
+};
+
+// ======================================================
+// EMAIL NOTIFICATIONS
+// ======================================================
+
+// Resolves the email(s) of whoever should be notified next —
+// either one specific user (userId) or everyone active in a role (roleId).
+const getEmailRecipients = async (client, { userId = null, roleId = null }) => {
+  if (userId) {
+    const r = await client.query(
+      `
+        SELECT UserName, Email
+        FROM Users
+        WHERE UserID = $1
+          AND IsActive = TRUE
+          AND Email IS NOT NULL
+          AND Email <> ''
+      `,
+      [userId],
+    );
+    return r.rows;
+  }
+
+  if (roleId) {
+    const r = await client.query(
+      `
+        SELECT UserName, Email
+        FROM Users
+        WHERE RoleID = $1
+          AND IsActive = TRUE
+          AND Email IS NOT NULL
+          AND Email <> ''
+      `,
+      [roleId],
+    );
+    return r.rows;
+  }
+
+  return [];
+};
+
+// Re-fetches the full audit (with evaluations) so we can build the PDF.
+const getFullAuditById = async (client, assignmentId) => {
+  const result = await client.query(
+    `
+      ${AUDIT_SELECT_BASE}
+      WHERE aa.AssignmentID = $1
+      ${AUDIT_GROUP_BY}
+    `,
+    [assignmentId],
+  );
+
+  return result.rows[0] || null;
+};
+
+
+
+
+
+
+const sendAuditStatusEmail = async (
+  client,
+  { assignmentId, userId = null, roleId = null, statusLabel, extraMessage = "" },
+) => {
+  try {
+    const audit = await getFullAuditById(client, assignmentId);
+
+    if (!audit) {
+      return;
+    }
+
+    const roleRecipients = await getEmailRecipients(client, { userId, roleId });
+
+    // Store gets a copy of every status-change email, in addition to
+    // whoever the normal recipient for this step is.
+    const recipients = [...roleRecipients];
+
+    if (audit.storeemail) {
+      const alreadyIncluded = recipients.some(
+        (r) => (r.email || "").toLowerCase() === audit.storeemail.toLowerCase(),
+      );
+
+      if (!alreadyIncluded) {
+        recipients.push({
+          username: audit.storecode || "Store",
+          email: audit.storeemail,
+        });
+      }
+    }
+
+    if (recipients.length === 0) {
+      return;
+    }
+
+    let pdfBuffer = null;
+
+    try {
+      pdfBuffer = await generateAuditPdfBuffer(audit);
+    } catch (pdfError) {
+      console.log("Audit PDF generation failed:", pdfError.message);
+    }
+
+    const actionUrl = process.env.APP_BASE_URL
+      ? `${process.env.APP_BASE_URL}/Audits/${assignmentId}`
+      : null;
+
+    await Promise.all(
+      recipients.map((recipient) =>
+        sendMail({
+          to: recipient.email,
+          subject: `Audit update — ${audit.storecode} (${statusLabel})`,
+          html: auditUpdateEmailHtml({
+            recipientName: recipient.username,
+            storeCode: audit.storecode,
+            brandName: audit.brandname,
+            locationName: audit.locationname,
+            statusLabel,
+            extraMessage,
+            finalPercentage: audit.finalpercentage,
+            riskLevel: audit.risklevel,
+            actionUrl,
+          }),
+          attachments: pdfBuffer
+            ? [
+                {
+                  filename: `Audit-${assignmentId}.pdf`,
+                  content: pdfBuffer,
+                },
+              ]
+            : [],
+        }),
+      ),
+    );
+  } catch (error) {
+    console.log("sendAuditStatusEmail error:", error.message);
+  }
 };
 
 // Resolves the User account tied to the Ops Manager
@@ -187,11 +328,13 @@ const AUDIT_SELECT_BASE = `
     aa.RejectionReason,
     aa.RevisionReason,
     aa.AuditManagerNote,
+    aa.CashCount,
 
     aa.IsActive,
 
     s.StoreSerial,
     s.StoreCode,
+    s.Email AS StoreEmail,
 
     b.BrandName,
     l.LocationName,
@@ -437,6 +580,7 @@ router.post("/Audits", verifyToken, async (req, res) => {
       auditPoints,
       auditOverstation,
       status,
+      cashCount,
     } = req.body;
 
     if (!storeSerial || !opsManagerID || !auditorID) {
@@ -475,10 +619,11 @@ router.post("/Audits", verifyToken, async (req, res) => {
               TotalScore,
               FinalPercentage,
               RiskLevel,
+              CashCount,
               IsActive
             )
             VALUES (
-              $1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE
+              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE
             )
             RETURNING AssignmentID
           `,
@@ -492,6 +637,7 @@ router.post("/Audits", verifyToken, async (req, res) => {
         totalScore,
         finalPercentage,
         riskLevel,
+        cashCount ? JSON.stringify(cashCount) : null,
       ],
     );
 
@@ -541,7 +687,13 @@ router.post("/Audits", verifyToken, async (req, res) => {
         roleId: ROLES.AUDIT_MANAGER,
         message: `New audit submitted for ${storeCode} — awaiting review.`,
         type: "info",
-        assignmentId,
+        assignmentId: assignmentID,
+      });
+
+      await sendAuditStatusEmail(client, {
+        assignmentId: assignmentID,
+        roleId: ROLES.AUDIT_MANAGER,
+        statusLabel: "Submitted — awaiting review",
       });
     }
 
@@ -592,6 +744,7 @@ router.put("/Audits/:id", verifyToken, async (req, res) => {
       cashierName,
       auditDate,
       auditOverstation,
+      cashCount,
     } = req.body;
 
     if (status !== undefined && !ALLOWED_STATUSES.includes(status)) {
@@ -678,6 +831,17 @@ router.put("/Audits/:id", verifyToken, async (req, res) => {
             WHERE AssignmentID = $2
           `,
         [auditOverstation, id],
+      );
+    }
+
+    if (cashCount !== undefined) {
+      await client.query(
+        `
+            UPDATE AuditAssignments
+            SET CashCount = $1
+            WHERE AssignmentID = $2
+          `,
+        [cashCount ? JSON.stringify(cashCount) : null, id],
       );
     }
 
@@ -834,6 +998,13 @@ router.put("/Audits/:id", verifyToken, async (req, res) => {
           type: "warning",
           assignmentId: id,
         });
+
+        await sendAuditStatusEmail(client, {
+          assignmentId: id,
+          userId: auditorId,
+          statusLabel: "Needs Revision",
+          extraMessage: revisionReason || "See audit manager comments.",
+        });
       } else if (status === "Rejected") {
         await createNotification(client, {
           userId: auditorId,
@@ -842,6 +1013,13 @@ router.put("/Audits/:id", verifyToken, async (req, res) => {
           }`,
           type: "error",
           assignmentId: id,
+        });
+
+        await sendAuditStatusEmail(client, {
+          assignmentId: id,
+          userId: auditorId,
+          statusLabel: "Rejected",
+          extraMessage: rejectionReason || "See audit manager comments.",
         });
       } else if (status === "Forwarded") {
         const opsUserId = await getOpsManagerUserId(client, storeSerial);
@@ -854,6 +1032,13 @@ router.put("/Audits/:id", verifyToken, async (req, res) => {
           type: "info",
           assignmentId: id,
         });
+
+        await sendAuditStatusEmail(client, {
+          assignmentId: id,
+          userId: opsUserId,
+          roleId: opsUserId ? null : ROLES.OPS_MANAGER,
+          statusLabel: "Forwarded — awaiting Ops Manager review",
+        });
       } else if (status === "Sent to Store") {
         const smUserId = await getStoreManagerUserId(client, storeSerial);
 
@@ -865,6 +1050,13 @@ router.put("/Audits/:id", verifyToken, async (req, res) => {
           type: "info",
           assignmentId: id,
         });
+
+        await sendAuditStatusEmail(client, {
+          assignmentId: id,
+          userId: smUserId,
+          roleId: smUserId ? null : ROLES.STORE_MANAGER,
+          statusLabel: "Sent to Store — action plan needed",
+        });
       } else if (
         status === "Submitted" &&
         previousStatus === "Needs Revision"
@@ -875,12 +1067,24 @@ router.put("/Audits/:id", verifyToken, async (req, res) => {
           type: "info",
           assignmentId: id,
         });
+
+        await sendAuditStatusEmail(client, {
+          assignmentId: id,
+          roleId: ROLES.AUDIT_MANAGER,
+          statusLabel: "Resubmitted — awaiting review",
+        });
       } else if (status === "Completed") {
         await createNotification(client, {
           userId: auditorId,
           message: "Your audit has been completed.",
           type: "success",
           assignmentId: id,
+        });
+
+        await sendAuditStatusEmail(client, {
+          assignmentId: id,
+          userId: auditorId,
+          statusLabel: "Completed",
         });
       }
     }

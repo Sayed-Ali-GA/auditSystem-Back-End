@@ -45,11 +45,12 @@ const createTables = async () => {
         `);
 
 
-        // Table of Stores
+    // Table of Stores
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Stores (
                 StoreSerial SERIAL PRIMARY KEY,
                 StoreCode VARCHAR(255) NOT NULL,
+                Email VARCHAR(255),
                 BrandID INTEGER REFERENCES Brands(BrandID),
                 LocationID INTEGER REFERENCES Locations(LocationID),
                 OpsManagerID INTEGER REFERENCES OpsManagers(OpsManagerID),
