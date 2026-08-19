@@ -16,7 +16,7 @@ const verifyToken = (req, res, next) => {
             process.env.JWT_SECRET
         );
         req.user = decoded;
-        console.log(decoded);
+        // console.log(decoded);
         next();
     } catch (err) {
         console.error(err);

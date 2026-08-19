@@ -3,12 +3,12 @@ const jwt = require("jsonwebtoken");
 
 const isAdmin = (req, res, next) => {
 
-    console.log("USER FROM TOKEN:");
-    console.log(req.user);
+    // console.log("USER FROM TOKEN:");
+    // console.log(req.user);
 
-    console.log("ROLE:");
-    console.log(req.user.RoleID);
-    console.log(typeof req.user.RoleID);
+    // console.log("ROLE:");
+    // console.log(req.user.RoleID);
+    // console.log(typeof req.user.RoleID);
 
 
     if (Number(req.user.RoleID) !== 1) {

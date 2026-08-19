@@ -33,28 +33,40 @@ router.post("/OpsManagers", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
+
+
+// HARD DELETE — blocked if still linked to a store or an audit.
 router.delete("/OpsManagers/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query(
-       "UPDATE OpsManagers SET IsActive = FALSE WHERE opsmanagerid = $1 RETURNING *",
+      "DELETE FROM OpsManagers WHERE opsmanagerid = $1 RETURNING *",
       [id]
     );
+
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Ops Manager not found" });
     }
+
     res.status(200).json({
-      message: "Ops Manager archived successfully",
+      message: "Ops Manager deleted permanently",
       OpsManagers: result.rows[0],
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      error: "Something went wrong",
-      details: err.message,
-    });
+
+    if (err.code === "23503") {
+      return res.status(409).json({
+        error:
+          "Cannot delete this Ops Manager — they're still linked to one or more stores or audits. Reassign those first.",
+      });
+    }
+
+    res.status(500).json({ error: "Something went wrong", details: err.message });
   }
 });
+
+
 
 router.put("/OpsManagers/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
@@ -78,21 +90,7 @@ router.put("/OpsManagers/:id", verifyToken, isAdmin, async (req, res) => {
 });
 
 
-router.patch("/OpsManagers/:id/restore", verifyToken, isAdmin, async (req, res) => {
-  const { id } = req.params;
-  try {
-    const result = await pool.query(
-      "UPDATE OpsManagers SET IsActive = TRUE WHERE opsmanagerid = $1 RETURNING *",
-      [id]
-    );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: "Ops Manager not found" });
-    }
-    res.status(200).json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
+
+
 
 module.exports = router;
