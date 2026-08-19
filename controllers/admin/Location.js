@@ -36,28 +36,40 @@ router.post("/Location", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
+
+// HARD DELETE — blocked if a store, store manager, or user still uses it.
 router.delete("/Location/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query(
-      "UPDATE Locations SET IsActive = FALSE WHERE locationid = $1 RETURNING *",
+      "DELETE FROM Locations WHERE locationid = $1 RETURNING *",
       [id]
     );
+
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Location not found" });
     }
+
     res.status(200).json({
-       message: "Location archived successfully",
+      message: "Location deleted permanently",
       LocationName: result.rows[0],
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      error: "Something went wrong",
-      details: err.message,
-    });
+
+    if (err.code === "23503") {
+      return res.status(409).json({
+        error:
+          "Cannot delete this location — it's still linked to a store, store manager, or user. Reassign or remove those first.",
+      });
+    }
+
+    res.status(500).json({ error: "Something went wrong", details: err.message });
   }
 });
+
+
+
 
 router.put("/Location/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
@@ -83,21 +95,6 @@ router.put("/Location/:id", verifyToken, isAdmin, async (req, res) => {
 
 
 
-router.patch("/Location/:id/restore", verifyToken, isAdmin, async (req, res) => {
-  const { id } = req.params;
-  try {
-    const result = await pool.query(
-      "UPDATE Locations SET IsActive = TRUE WHERE locationid = $1 RETURNING *",
-      [id]
-    );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: "Location not found" });
-    }
-    res.status(200).json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
+
 
 module.exports = router;

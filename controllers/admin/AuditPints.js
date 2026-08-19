@@ -116,44 +116,35 @@ router.post("/audit-point", verifyToken, async (req, res) => {
   }
 });
 
-// =====================================================
-// ARCHIVE AUDIT POINT
-// Soft delete
-// IsActive = FALSE
-// =====================================================
+// HARD DELETE — blocked if any audit already scored this point.
 router.delete("/audit-points/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
 
   try {
     const result = await pool.query(
-      `
-        UPDATE AuditPoints
-        SET IsActive = FALSE
-        WHERE AuditPointID = $1
-        RETURNING
-          AuditPointID,
-          IsActive
-        `,
+      "DELETE FROM AuditPoints WHERE AuditPointID = $1 RETURNING AuditPointID",
       [id],
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({
-        error: "Audit Point not found",
-      });
+      return res.status(404).json({ error: "Audit Point not found" });
     }
 
     res.status(200).json({
-      message: "Audit Point archived successfully",
+      message: "Audit Point deleted permanently",
       auditPoint: result.rows[0],
     });
   } catch (error) {
-    console.error("ARCHIVE AUDIT POINT ERROR:", error);
+    console.error("DELETE AUDIT POINT ERROR:", error);
 
-    res.status(500).json({
-      error: "Something went wrong",
-      details: error.message,
-    });
+    if (error.code === "23503") {
+      return res.status(409).json({
+        error:
+          "Cannot delete this audit point — it has already been used in one or more submitted audits. Historical audits need it to stay intact.",
+      });
+    }
+
+    res.status(500).json({ error: "Something went wrong", details: error.message });
   }
 });
 
@@ -236,67 +227,7 @@ router.put("/audit-points/:id", verifyToken, async (req, res) => {
   }
 });
 
-// =====================================================
-// RESTORE AUDIT POINT
-// IsActive = TRUE
-// =====================================================
-router.patch("/audit-points/:id/restore", verifyToken, async (req, res) => {
-  const { id } = req.params;
 
-  try {
-    const result = await pool.query(
-      `
-        UPDATE AuditPoints
 
-        SET IsActive = TRUE
-
-        WHERE AuditPointID = $1
-
-        RETURNING
-          AuditPointID,
-          IsActive
-        `,
-      [id],
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({
-        error: "Audit Point not found",
-      });
-    }
-
-    // Return complete audit point
-    const auditPoint = await pool.query(
-      `
-        SELECT
-          ap.AuditPointID,
-          ap.AuditComment,
-          ap.SubPointCriteria,
-          ap.Weightage,
-          ap.RiskMatrix,
-          ap.IsActive,
-
-          mc.MajorCriteriaID,
-          mc.MajorCriteriaName
-
-        FROM AuditPoints ap
-
-        LEFT JOIN MajorCriteria mc
-          ON ap.MajorCriteriaID = mc.MajorCriteriaID
-
-        WHERE ap.AuditPointID = $1
-        `,
-      [id],
-    );
-
-    res.status(200).json(auditPoint.rows[0]);
-  } catch (error) {
-    console.error("RESTORE AUDIT POINT ERROR:", error);
-
-    res.status(500).json({
-      error: error.message,
-    });
-  }
-});
 
 module.exports = router;

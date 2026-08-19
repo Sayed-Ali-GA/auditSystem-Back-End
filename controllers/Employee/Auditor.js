@@ -153,8 +153,6 @@ const sendAuditStatusEmail = async (
 
     const roleRecipients = await getEmailRecipients(client, { userId, roleId });
 
-    // Store gets a copy of every status-change email, in addition to
-    // whoever the normal recipient for this step is.
     const recipients = [...roleRecipients];
 
     if (audit.storeemail) {
@@ -182,6 +180,19 @@ const sendAuditStatusEmail = async (
       console.log("Audit PDF generation failed:", pdfError.message);
     }
 
+    // ==============================
+    // PDF FILE NAME
+    // Store Code + Brand
+    // ==============================
+
+    const safeStoreCode = String(audit.storecode || "Unknown-Store")
+      .replace(/[^a-zA-Z0-9_-]/g, "_");
+
+    const safeBrandName = String(audit.brandname || "Unknown-Brand")
+      .replace(/[^a-zA-Z0-9_-]/g, "_");
+
+    const pdfFileName = `${safeStoreCode}_${safeBrandName}.pdf`;
+
     const actionUrl = process.env.APP_BASE_URL
       ? `${process.env.APP_BASE_URL}/Audits/${assignmentId}`
       : null;
@@ -190,7 +201,9 @@ const sendAuditStatusEmail = async (
       recipients.map((recipient) =>
         sendMail({
           to: recipient.email,
+
           subject: `Audit update — ${audit.storecode} (${statusLabel})`,
+
           html: auditUpdateEmailHtml({
             recipientName: recipient.username,
             storeCode: audit.storecode,
@@ -202,10 +215,11 @@ const sendAuditStatusEmail = async (
             riskLevel: audit.risklevel,
             actionUrl,
           }),
+
           attachments: pdfBuffer
             ? [
                 {
-                  filename: `Audit-${assignmentId}.pdf`,
+                  filename: pdfFileName,
                   content: pdfBuffer,
                 },
               ]
@@ -294,6 +308,12 @@ const userCanAccessAudit = async (client, authUser, audit) => {
   }
 
   if (roleId === ROLES.STORE_MANAGER) {
+
+    if (authUser.IsStoreAccount && authUser.StoreSerial) {
+      return Number(audit.storeserial) === Number(authUser.StoreSerial);
+    }
+
+
     const r = await client.query(
       `
         SELECT 1
@@ -449,15 +469,23 @@ router.get("/Audits", verifyToken, async (req, res) => {
           )
         `);
     } else if (roleId === ROLES.STORE_MANAGER) {
-      params.push(authUser.OracleID);
 
-      conditions.push(`
-          s.StoreManagerID IN (
-            SELECT StoreManagerID
-            FROM StoreManagers
-            WHERE OracleID = $${params.length}
-          )
-        `);
+      if (authUser.IsStoreAccount && authUser.StoreSerial) {
+        params.push(authUser.StoreSerial);
+
+        conditions.push(`aa.StoreSerial = $${params.length}`);
+      } else {
+
+        params.push(authUser.OracleID);
+
+        conditions.push(`
+            s.StoreManagerID IN (
+              SELECT StoreManagerID
+              FROM StoreManagers
+              WHERE OracleID = $${params.length}
+            )
+          `);
+      }
     } else if (roleId === ROLES.AUDITOR) {
       params.push(authUser.UserID);
 
@@ -1116,80 +1144,88 @@ router.put("/Audits/:id", verifyToken, async (req, res) => {
 });
 
 // ======================================================
-// ARCHIVE AUDIT
+// DELETE AUDIT (PERMANENT — HARD DELETE)
+// Removes the audit and everything tied to it:
+//   1) Notifications referencing this audit
+//   2) AuditEvaluations belonging to this audit
+//   3) The AuditAssignments row itself
+// All inside one transaction, so either everything is
+// removed, or nothing is (no orphaned rows, no FK errors).
 // ======================================================
 
 router.delete("/Audits/:id", verifyToken, isAdmin, async (req, res) => {
+  const client = await pool.connect();
+
   try {
+    await client.query("BEGIN");
+
     const { id } = req.params;
 
-    const result = await pool.query(
+    const existing = await client.query(
       `
-          UPDATE AuditAssignments
-          SET IsActive = FALSE
-          WHERE AssignmentID = $1
-          RETURNING AssignmentID, IsActive
-        `,
+        SELECT AssignmentID
+        FROM AuditAssignments
+        WHERE AssignmentID = $1
+      `,
       [id],
     );
 
-    if (result.rowCount === 0) {
+    if (existing.rows.length === 0) {
+      await client.query("ROLLBACK");
+
       return res.status(404).json({
         error: "Audit not found",
       });
     }
 
-    res.status(200).json({
-      message: "Audit archived successfully",
-      assignmentID: result.rows[0].assignmentid,
-      isActive: result.rows[0].isactive,
-    });
-  } catch (error) {
-    console.error(error);
-
-    res.status(500).json({
-      error: "Something went wrong",
-      details: error.message,
-    });
-  }
-});
-
-// ======================================================
-// RESTORE AUDIT
-// ======================================================
-
-router.patch("/Audits/:id/restore", verifyToken, isAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await pool.query(
+    // 1) Remove notifications that point to this audit —
+    //    otherwise Notifications.RelatedAssignmentID FK blocks the delete.
+    await client.query(
       `
-          UPDATE AuditAssignments
-          SET IsActive = TRUE
-          WHERE AssignmentID = $1
-          RETURNING AssignmentID, IsActive
-        `,
+        DELETE FROM Notifications
+        WHERE RelatedAssignmentID = $1
+      `,
       [id],
     );
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({
-        error: "Audit not found",
-      });
-    }
+    // 2) Remove every evaluation (rating, score, observation,
+    //    action plan...) tied to this audit — otherwise
+    //    AuditEvaluations.AssignmentID FK blocks the delete.
+    await client.query(
+      `
+        DELETE FROM AuditEvaluations
+        WHERE AssignmentID = $1
+      `,
+      [id],
+    );
+
+    // 3) Finally remove the audit itself.
+    const deleted = await client.query(
+      `
+        DELETE FROM AuditAssignments
+        WHERE AssignmentID = $1
+        RETURNING AssignmentID
+      `,
+      [id],
+    );
+
+    await client.query("COMMIT");
 
     res.status(200).json({
-      message: "Audit restored successfully",
-      assignmentID: result.rows[0].assignmentid,
-      isActive: result.rows[0].isactive,
+      message: "Audit permanently deleted",
+      assignmentID: deleted.rows[0].assignmentid,
     });
   } catch (error) {
-    console.error(error);
+    await client.query("ROLLBACK");
+
+    console.error("DELETE /Audits/:id error:", error);
 
     res.status(500).json({
       error: "Something went wrong",
       details: error.message,
     });
+  } finally {
+    client.release();
   }
 });
 

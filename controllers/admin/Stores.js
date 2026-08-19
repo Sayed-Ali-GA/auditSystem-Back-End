@@ -121,43 +121,40 @@ router.post("/Stores", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// =====================================================
-// ARCHIVE STORE
-// =====================================================
+
+
+// HARD DELETE — blocked if the store has any audits (draft or otherwise).
 router.delete("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
 
   try {
     const result = await pool.query(
-      `
-        UPDATE Stores
-        SET IsActive = FALSE
-        WHERE StoreSerial = $1
-        RETURNING StoreSerial, StoreCode, IsActive
-        `,
+      `DELETE FROM Stores WHERE StoreSerial = $1
+       RETURNING StoreSerial, StoreCode`,
       [id],
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({
-        error: "Store not found",
-      });
+      return res.status(404).json({ error: "Store not found" });
     }
 
     res.status(200).json({
-      message: "Store archived successfully",
+      message: "Store deleted permanently",
       store: result.rows[0],
     });
   } catch (err) {
     console.error("DELETE /Stores/:id error:", err);
 
-    res.status(500).json({
-      error: "Something went wrong",
-      details: err.message,
-    });
+    if (err.code === "23503") {
+      return res.status(409).json({
+        error:
+          "Cannot delete this store — it still has audits on record. Delete those audits first if you really want to remove the store.",
+      });
+    }
+
+    res.status(500).json({ error: "Something went wrong", details: err.message });
   }
 });
-
 // =====================================================
 // UPDATE STORE
 // =====================================================
@@ -219,42 +216,6 @@ router.put("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// =====================================================
-// RESTORE STORE
-// =====================================================
-router.patch("/Stores/:id/restore", verifyToken, isAdmin, async (req, res) => {
-  const { id } = req.params;
 
-  try {
-    const updateResult = await pool.query(
-      `
-        UPDATE Stores
-        SET IsActive = TRUE
-        WHERE StoreSerial = $1
-        RETURNING StoreSerial
-        `,
-      [id],
-    );
-
-    if (updateResult.rowCount === 0) {
-      return res.status(404).json({
-        error: "Store not found",
-      });
-    }
-
-    const restoredStore = await pool.query(
-      `${STORE_SELECT} WHERE s.StoreSerial = $1`,
-      [id],
-    );
-
-    res.status(200).json(restoredStore.rows[0]);
-  } catch (err) {
-    console.error("PATCH /Stores/:id/restore error:", err);
-
-    res.status(500).json({
-      error: err.message,
-    });
-  }
-});
 
 module.exports = router;

@@ -126,45 +126,37 @@ router.post("/StoreManagers", verifyToken, isAdmin, async (req, res) => {
 // =====================================================
 // ARCHIVE STORE MANAGER
 // =====================================================
+// HARD DELETE — blocked if still linked to a store.
 router.delete("/StoreManagers/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
 
   try {
     const result = await pool.query(
-      `
-        UPDATE StoreManagers
-        SET IsActive = FALSE
-        WHERE StoreManagerID = $1
-
-        RETURNING
-          StoreManagerID AS storemanagerid,
-          StoreManagerName AS storemanagername,
-          OracleID AS oracleid,
-          BrandID AS brandid,
-          LocationID AS locationid,
-          IsActive AS isactive;
-        `,
+      `DELETE FROM StoreManagers WHERE StoreManagerID = $1
+       RETURNING StoreManagerID AS storemanagerid, StoreManagerName AS storemanagername,
+                 OracleID AS oracleid, BrandID AS brandid, LocationID AS locationid`,
       [id],
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({
-        error: "Store Manager not found",
-      });
+      return res.status(404).json({ error: "Store Manager not found" });
     }
 
     res.status(200).json({
-      message: "Store Manager archived successfully",
-
+      message: "Store Manager deleted permanently",
       storeManager: result.rows[0],
     });
   } catch (err) {
     console.error("DELETE /StoreManagers/:id error:", err);
 
-    res.status(500).json({
-      error: "Something went wrong",
-      details: err.message,
-    });
+    if (err.code === "23503") {
+      return res.status(409).json({
+        error:
+          "Cannot delete this Store Manager — they're still assigned to one or more stores. Reassign those stores first.",
+      });
+    }
+
+    res.status(500).json({ error: "Something went wrong", details: err.message });
   }
 });
 
@@ -238,73 +230,6 @@ router.put("/StoreManagers/:id", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// =====================================================
-// RESTORE STORE MANAGER
-// =====================================================
-router.patch(
-  "/StoreManagers/:id/restore",
-  verifyToken,
-  isAdmin,
-  async (req, res) => {
-    const { id } = req.params;
 
-    try {
-      const updateResult = await pool.query(
-        `
-        UPDATE StoreManagers
-
-        SET IsActive = TRUE
-
-        WHERE StoreManagerID = $1
-
-        RETURNING StoreManagerID;
-        `,
-        [id],
-      );
-
-      if (updateResult.rowCount === 0) {
-        return res.status(404).json({
-          error: "Store Manager not found",
-        });
-      }
-
-      const result = await pool.query(
-        `
-        SELECT
-          sm.StoreManagerID AS storemanagerid,
-          sm.StoreManagerName AS storemanagername,
-          sm.OracleID AS oracleid,
-
-          sm.IsActive AS isactive,
-
-          b.BrandID AS brandid,
-          b.BrandName AS brandname,
-
-          l.LocationID AS locationid,
-          l.LocationName AS locationname
-
-        FROM StoreManagers sm
-
-        LEFT JOIN Brands b
-          ON sm.BrandID = b.BrandID
-
-        LEFT JOIN Locations l
-          ON sm.LocationID = l.LocationID
-
-        WHERE sm.StoreManagerID = $1;
-        `,
-        [id],
-      );
-
-      res.status(200).json(result.rows[0]);
-    } catch (err) {
-      console.error("PATCH /StoreManagers/:id/restore error:", err);
-
-      res.status(500).json({
-        error: err.message,
-      });
-    }
-  },
-);
 
 module.exports = router;
