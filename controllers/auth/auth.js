@@ -90,17 +90,20 @@ router.post("/createUser",verifyToken,isAdmin,async(req,res)=>{
 
 
 // LOGIN (personal account — Oracle ID + Password)
-router.post("/login",async(req,res)=>{
-    const {OracleID,Password}=req.body;
-    try{
+router.post("/login", async (req, res) => {
+    const { OracleID, Password } = req.body;
 
-        if(!OracleID || !Password){
+    try {
+        const oracleId = String(OracleID || "").trim();
+        const password = String(Password || "");
+
+        if (!oracleId || !password) {
             return res.status(400).json({
-                message:"OracleID and Password are required."
+                message: "OracleID and Password are required."
             });
         }
 
-        const result=await pool.query(`
+        const result = await pool.query(`
             SELECT 
                 UserID,
                 OracleID,
@@ -110,88 +113,85 @@ router.post("/login",async(req,res)=>{
                 RoleID,
                 IsActive
             FROM Users
-            WHERE OracleID=$1
-        `,
-        [OracleID]);
+            WHERE OracleID = $1
+        `, [oracleId]);
 
-        if(result.rows.length===0){
+        if (result.rows.length === 0) {
             return res.status(401).json({
-                message:"Invalid credentials."
+                message: "Invalid credentials."
             });
         }
-        const user=result.rows[0];
 
-        if(!user.isactive){
+        const user = result.rows[0];
+
+        if (!user.isactive) {
             return res.status(403).json({
-                message:"Account disabled."
+                message: "This account has been disabled. Please contact your Admin."
             });
         }
 
-        const passwordMatch=await bcrypt.compare(
-            String(Password),
-            user.password
-        );
+        const passwordMatch = await bcrypt.compare(password, user.password);
 
-        if(!passwordMatch){
+        if (!passwordMatch) {
             return res.status(401).json({
-                message:"Invalid credentials."
+                message: "Invalid credentials."
             });
         }
 
-        const token=jwt.sign(
-        {
-            UserID:user.userid,
-            OracleID:user.oracleid,
-            RoleID:user.roleid,
-            UserName: user.username,
-            LocationID:user.locationid
-        },
-        process.env.JWT_SECRET,
-        {
-            expiresIn:"8h"
-        });
-
+        const token = jwt.sign(
+            {
+                UserID: user.userid,
+                OracleID: user.oracleid,
+                RoleID: user.roleid,
+                UserName: user.username,
+                LocationID: user.locationid,
+                IsStoreAccount: false,
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: "8h" }
+        );
 
         res.json({
             token,
-            user:{
-                UserID:user.userid,
-                UserName:user.username,
-                RoleID:user.roleid
+            user: {
+                UserID: user.userid,
+                UserName: user.username,
+                RoleID: user.roleid,
             }
         });
-    }catch(error){
+    } catch (error) {
         console.error(error);
-        res.status(500).json({
-            message:"Server error."
-        });
+        res.status(500).json({ message: "Server error." });
     }
 });
 
 
-
+// LOGIN (store account — Store Code + Password)
 router.post("/store-login", async (req, res) => {
     const { StoreCode, Password } = req.body;
 
     try {
-        if (!StoreCode || !Password) {
+        const storeCode = String(StoreCode || "").trim();
+        const password = String(Password || "");
+
+        if (!storeCode || !password) {
             return res.status(400).json({
                 message: "Store code and password are required."
             });
         }
 
-        const result = await pool.query(
-            `
+        // Case-insensitive lookup — store codes are conventionally
+        // uppercase, but the person typing them shouldn't have to
+        // remember exact casing.
+        const result = await pool.query(`
             SELECT
                 StoreSerial,
                 StoreCode,
                 LoginPassword,
                 IsActive
             FROM Stores
-            WHERE StoreCode = $1
-            `,
-            [StoreCode]
-        );
+            WHERE UPPER(StoreCode) = UPPER($1)
+        `, [storeCode]);
 
         if (result.rows.length === 0) {
             return res.status(401).json({
@@ -213,17 +213,13 @@ router.post("/store-login", async (req, res) => {
             });
         }
 
-        const passwordMatch = await bcrypt.compare(
-            String(Password),
-            store.loginpassword
-        );
+        const passwordMatch = await bcrypt.compare(password, store.loginpassword);
 
         if (!passwordMatch) {
             return res.status(401).json({
                 message: "Invalid credentials."
             });
         }
-
 
         const token = jwt.sign(
             {
@@ -234,9 +230,7 @@ router.post("/store-login", async (req, res) => {
                 IsStoreAccount: true,
             },
             process.env.JWT_SECRET,
-            {
-                expiresIn: "8h"
-            }
+            { expiresIn: "8h" }
         );
 
         res.json({
@@ -250,9 +244,7 @@ router.post("/store-login", async (req, res) => {
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({
-            message: "Server error."
-        });
+        res.status(500).json({ message: "Server error." });
     }
 });
 
