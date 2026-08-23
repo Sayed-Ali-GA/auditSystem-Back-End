@@ -1,9 +1,8 @@
+// DataBase/initDB.js
 const pool = require("../config/db");
 
 const createTables = async () => {
     try {
-
-        // Table of Brands
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Brands (
                 BrandID SERIAL PRIMARY KEY,
@@ -11,10 +10,6 @@ const createTables = async () => {
             );
         `);
 
-        
-
-
-        // Table of Locations
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Locations (
                 LocationID SERIAL PRIMARY KEY,
@@ -22,8 +17,6 @@ const createTables = async () => {
             );
         `);
 
-
-        // Table of OpsManagers
         await pool.query(`
             CREATE TABLE IF NOT EXISTS OpsManagers (
                 OpsManagerID SERIAL PRIMARY KEY,
@@ -32,8 +25,6 @@ const createTables = async () => {
             );
         `);
 
-
-        // Table of StoreManagers
         await pool.query(`
             CREATE TABLE IF NOT EXISTS StoreManagers (
                 StoreManagerID SERIAL PRIMARY KEY,
@@ -44,8 +35,6 @@ const createTables = async () => {
             );
         `);
 
-
-    // Table of Stores
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Stores (
                 StoreSerial SERIAL PRIMARY KEY,
@@ -58,8 +47,6 @@ const createTables = async () => {
             );
         `);
 
-
-        // Table of MajorCriteria
         await pool.query(`
             CREATE TABLE IF NOT EXISTS MajorCriteria (
                 MajorCriteriaID SERIAL PRIMARY KEY,
@@ -67,22 +54,16 @@ const createTables = async () => {
             );
         `);
 
-
-        // Create ENUM Type RiskLevel
         await pool.query(`
             DO $$ BEGIN
                 CREATE TYPE RiskLevel AS ENUM (
-                    'Low',
-                    'Moderate',
-                    'High'
+                    'Low', 'Moderate', 'High'
                 );
             EXCEPTION
                 WHEN duplicate_object THEN NULL;
             END $$;
         `);
 
-
-        // Table of AuditPoints
         await pool.query(`
             CREATE TABLE IF NOT EXISTS AuditPoints (
                 AuditPointID SERIAL PRIMARY KEY,
@@ -94,8 +75,6 @@ const createTables = async () => {
             );
         `);
 
-
-        // Table of Roles
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Roles (
                 RoleID SERIAL PRIMARY KEY,
@@ -103,8 +82,6 @@ const createTables = async () => {
             );
         `);
 
-
-        // Table of Users
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Users (
                 UserID SERIAL PRIMARY KEY,
@@ -118,8 +95,6 @@ const createTables = async () => {
             );
         `);
 
-
-        // Table of AuditAssignments
         await pool.query(`
             CREATE TABLE IF NOT EXISTS AuditAssignments (
                 AssignmentID SERIAL PRIMARY KEY,
@@ -135,14 +110,11 @@ const createTables = async () => {
             );
         `);
 
-
-       // Table of AuditEvaluations
         await pool.query(`
             CREATE TABLE IF NOT EXISTS AuditEvaluations (
                 EvaluationID SERIAL PRIMARY KEY,
                 AssignmentID INTEGER REFERENCES AuditAssignments(AssignmentID),
                 AuditPointID INTEGER REFERENCES AuditPoints(AuditPointID),
-
                 Rating VARCHAR(10),
                 Score NUMERIC(5,2),
                 WeightPercentage NUMERIC(5,2),
@@ -150,14 +122,11 @@ const createTables = async () => {
                 ActionPlan TEXT,
                 TargetDate DATE,
                 Photos TEXT[],
-
                 AuditOverstation VARCHAR(100),
                 CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
-
-        // Unique constraint for evaluation upserts
         await pool.query(`
             DO $$
             BEGIN
@@ -168,13 +137,12 @@ const createTables = async () => {
             END $$;
         `);
 
-
-        // Table of Notifications
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Notifications (
                 NotificationID SERIAL PRIMARY KEY,
                 UserID INTEGER REFERENCES Users(UserID),
                 RoleID INTEGER REFERENCES Roles(RoleID),
+                StoreSerial INTEGER REFERENCES Stores(StoreSerial),
                 Message TEXT NOT NULL,
                 Type VARCHAR(20) DEFAULT 'info',
                 RelatedAssignmentID INTEGER REFERENCES AuditAssignments(AssignmentID),
@@ -183,22 +151,17 @@ const createTables = async () => {
             );
         `);
 
-
-        console.log(
-            `Tables checked/created successfully in database: ${process.env.DB_NAME} ✅✅`
-        );
-
+        console.log(`Tables checked/created successfully in database: ${process.env.DB_NAME} ✅✅`);
 
     } catch (err) {
-
         console.error("Error creating tables:", err);
-
     }
 };
 
+createTables().then(() => {
+    pool.end();
+});
 
-// Run
-createTables()
-    .then(() => {
-        pool.end();
-    });
+
+
+// ALTER TABLE Notifications ADD COLUMN IF NOT EXISTS StoreSerial INTEGER REFERENCES Stores(StoreSerial);

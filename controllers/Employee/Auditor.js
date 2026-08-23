@@ -135,11 +135,6 @@ const getFullAuditById = async (client, assignmentId) => {
   return result.rows[0] || null;
 };
 
-
-
-
-
-
 const sendAuditStatusEmail = async (
   client,
   { assignmentId, userId = null, roleId = null, statusLabel, extraMessage = "" },
@@ -313,7 +308,12 @@ const userCanAccessAudit = async (client, authUser, audit) => {
       return Number(audit.storeserial) === Number(authUser.StoreSerial);
     }
 
-
+    // Brand-scoped: the store manager must be linked to this store's
+    // StoreManagerID AND their StoreManagers row's BrandID must match
+    // the store's BrandID. Kept as a single correlated subquery (rather
+    // than two separate `WHERE OracleID = $N` lookups) so a manager
+    // tied to multiple StoreManagers rows across different brands can't
+    // match on brand alone — the same row must satisfy both conditions.
     const r = await client.query(
       `
         SELECT 1
@@ -323,6 +323,7 @@ const userCanAccessAudit = async (client, authUser, audit) => {
         WHERE
           s.StoreSerial = $1
           AND sm.OracleID = $2
+          AND s.BrandID = sm.BrandID
       `,
       [audit.storeserial, authUser.OracleID],
     );
@@ -478,11 +479,18 @@ router.get("/Audits", verifyToken, async (req, res) => {
 
         params.push(authUser.OracleID);
 
+        // Brand-scoped: only match a StoreManagers row that is BOTH
+        // this OracleID's AND shares the store's BrandID (s.BrandID is
+        // correlated from the outer query). This avoids the earlier
+        // two-subquery approach, which broke (`= (...)` returning
+        // multiple rows) whenever one OracleID is tied to more than
+        // one StoreManagers row.
         conditions.push(`
             s.StoreManagerID IN (
               SELECT StoreManagerID
               FROM StoreManagers
               WHERE OracleID = $${params.length}
+                AND BrandID = s.BrandID
             )
           `);
       }

@@ -1,3 +1,4 @@
+// controllers/admin/Stores.js
 const express = require("express");
 const bcrypt = require("bcrypt");
 const router = express.Router();
@@ -23,10 +24,6 @@ const STORE_SELECT = `
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// =====================================================
-// Small helper — normalizes & validates the shared
-// Store payload used by both POST and PUT.
-// =====================================================
 function parseStorePayload(body) {
   const errors = [];
 
@@ -36,9 +33,7 @@ function parseStorePayload(body) {
   const LocationID = body.LocationID || null;
   const OpsManagerID = body.OpsManagerID || null;
   const StoreManagerID = body.StoreManagerID || null;
-  const LoginPassword = body.LoginPassword
-    ? String(body.LoginPassword)
-    : "";
+  const LoginPassword = body.LoginPassword ? String(body.LoginPassword) : "";
 
   if (!StoreCode) {
     errors.push("Store code is required.");
@@ -66,9 +61,6 @@ function parseStorePayload(body) {
   };
 }
 
-// =====================================================
-// GET all stores (active by default)
-// =====================================================
 router.get("/Stores", verifyToken, async (req, res) => {
   try {
     const includeInactive = req.query.includeInactive === "true";
@@ -82,15 +74,10 @@ router.get("/Stores", verifyToken, async (req, res) => {
     res.status(200).json(result.rows);
   } catch (err) {
     console.error("GET /Stores error:", err);
-    res
-      .status(500)
-      .json({ error: "Something went wrong", details: err.message });
+    res.status(500).json({ error: "Something went wrong", details: err.message });
   }
 });
 
-// =====================================================
-// CREATE STORE — login password optional, in the same request
-// =====================================================
 router.post("/Stores", verifyToken, isAdmin, async (req, res) => {
   const { errors, values } = parseStorePayload(req.body);
 
@@ -98,20 +85,10 @@ router.post("/Stores", verifyToken, isAdmin, async (req, res) => {
     return res.status(400).json({ error: errors.join(" ") });
   }
 
-  const {
-    StoreCode,
-    Email,
-    BrandID,
-    LocationID,
-    OpsManagerID,
-    StoreManagerID,
-    LoginPassword,
-  } = values;
+  const { StoreCode, Email, BrandID, LocationID, OpsManagerID, StoreManagerID, LoginPassword } = values;
 
   try {
-    const hashedLoginPassword = LoginPassword
-      ? await bcrypt.hash(LoginPassword, 10)
-      : null;
+    const hashedLoginPassword = LoginPassword ? await bcrypt.hash(LoginPassword, 10) : null;
 
     const result = await pool.query(
       `INSERT INTO Stores (
@@ -119,40 +96,25 @@ router.post("/Stores", verifyToken, isAdmin, async (req, res) => {
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
        RETURNING StoreSerial`,
-      [
-        StoreCode,
-        Email,
-        BrandID,
-        LocationID,
-        OpsManagerID,
-        StoreManagerID,
-        hashedLoginPassword,
-      ]
+      [StoreCode, Email, BrandID, LocationID, OpsManagerID, StoreManagerID, hashedLoginPassword]
     );
 
     const storeSerial = result.rows[0].storeserial;
 
-    const newStore = await pool.query(`${STORE_SELECT} WHERE s.StoreSerial = $1`, [
-      storeSerial,
-    ]);
+    const newStore = await pool.query(`${STORE_SELECT} WHERE s.StoreSerial = $1`, [storeSerial]);
 
     res.status(201).json(newStore.rows[0]);
   } catch (err) {
     console.error("POST /Stores error:", err);
 
     if (err.code === "23505") {
-      return res
-        .status(409)
-        .json({ error: "A store with this code already exists." });
+      return res.status(409).json({ error: "A store with this code already exists." });
     }
 
     res.status(500).json({ error: err.message });
   }
 });
 
-// =====================================================
-// HARD DELETE — blocked if the store has any audits.
-// =====================================================
 router.delete("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
 
@@ -166,29 +128,20 @@ router.delete("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
       return res.status(404).json({ error: "Store not found" });
     }
 
-    res
-      .status(200)
-      .json({ message: "Store deleted permanently", store: result.rows[0] });
+    res.status(200).json({ message: "Store deleted permanently", store: result.rows[0] });
   } catch (err) {
     console.error("DELETE /Stores/:id error:", err);
 
     if (err.code === "23503") {
       return res.status(409).json({
-        error:
-          "Cannot delete this store — it still has audits on record. Delete those audits first if you really want to remove the store.",
+        error: "Cannot delete this store — it still has audits on record. Delete those audits first if you really want to remove the store.",
       });
     }
 
-    res
-      .status(500)
-      .json({ error: "Something went wrong", details: err.message });
+    res.status(500).json({ error: "Something went wrong", details: err.message });
   }
 });
 
-// =====================================================
-// UPDATE STORE — LoginPassword only changed if provided
-// (empty/undefined = keep existing password untouched)
-// =====================================================
 router.put("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
   const { errors, values } = parseStorePayload(req.body);
@@ -197,17 +150,20 @@ router.put("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
     return res.status(400).json({ error: errors.join(" ") });
   }
 
-  const {
-    StoreCode,
-    Email,
-    BrandID,
-    LocationID,
-    OpsManagerID,
-    StoreManagerID,
-    LoginPassword,
-  } = values;
+  const { StoreCode, Email, BrandID, LocationID, OpsManagerID, StoreManagerID, LoginPassword } = values;
 
   try {
+    const before = await pool.query(
+      `SELECT BrandID FROM Stores WHERE StoreSerial = $1`,
+      [id]
+    );
+
+    if (before.rows.length === 0) {
+      return res.status(404).json({ error: "Store not found" });
+    }
+
+    const previousBrandID = before.rows[0].brandid;
+
     let updateResult;
 
     if (LoginPassword) {
@@ -219,16 +175,7 @@ router.put("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
              OpsManagerID = $5, StoreManagerID = $6, LoginPassword = $7
          WHERE StoreSerial = $8
          RETURNING StoreSerial`,
-        [
-          StoreCode,
-          Email,
-          BrandID,
-          LocationID,
-          OpsManagerID,
-          StoreManagerID,
-          hashedLoginPassword,
-          id,
-        ]
+        [StoreCode, Email, BrandID, LocationID, OpsManagerID, StoreManagerID, hashedLoginPassword, id]
       );
     } else {
       updateResult = await pool.query(
@@ -245,19 +192,28 @@ router.put("/Stores/:id", verifyToken, isAdmin, async (req, res) => {
       return res.status(404).json({ error: "Store not found" });
     }
 
-    const updatedStore = await pool.query(
-      `${STORE_SELECT} WHERE s.StoreSerial = $1`,
-      [id]
-    );
+    const updatedStore = await pool.query(`${STORE_SELECT} WHERE s.StoreSerial = $1`, [id]);
+    const store = updatedStore.rows[0];
 
-    res.status(200).json(updatedStore.rows[0]);
+    if (
+      BrandID &&
+      previousBrandID !== null &&
+      previousBrandID !== undefined &&
+      Number(BrandID) !== Number(previousBrandID)
+    ) {
+      await pool.query(
+        `INSERT INTO Notifications (StoreSerial, Message, Type)
+         VALUES ($1, $2, 'info')`,
+        [id, `Your store's brand has been changed to "${store.brandname}".`]
+      );
+    }
+
+    res.status(200).json(store);
   } catch (err) {
     console.error("PUT /Stores/:id error:", err);
 
     if (err.code === "23505") {
-      return res
-        .status(409)
-        .json({ error: "A store with this code already exists." });
+      return res.status(409).json({ error: "A store with this code already exists." });
     }
 
     res.status(500).json({ error: err.message });
