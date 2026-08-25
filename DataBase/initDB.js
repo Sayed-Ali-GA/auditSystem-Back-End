@@ -6,24 +6,30 @@ const createTables = async () => {
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Brands (
                 BrandID SERIAL PRIMARY KEY,
-                BrandName VARCHAR(255) NOT NULL
+                BrandName VARCHAR(255) NOT NULL,
+                IsActive BOOLEAN DEFAULT TRUE
             );
         `);
+        await pool.query(`ALTER TABLE Brands ADD COLUMN IF NOT EXISTS IsActive BOOLEAN DEFAULT TRUE;`);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Locations (
                 LocationID SERIAL PRIMARY KEY,
-                LocationName VARCHAR(255) NOT NULL
+                LocationName VARCHAR(255) NOT NULL,
+                IsActive BOOLEAN DEFAULT TRUE
             );
         `);
+        await pool.query(`ALTER TABLE Locations ADD COLUMN IF NOT EXISTS IsActive BOOLEAN DEFAULT TRUE;`);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS OpsManagers (
                 OpsManagerID SERIAL PRIMARY KEY,
                 OracleID INTEGER UNIQUE,
-                OpsManagerName VARCHAR(255) NOT NULL
+                OpsManagerName VARCHAR(255) NOT NULL,
+                IsActive BOOLEAN DEFAULT TRUE
             );
         `);
+        await pool.query(`ALTER TABLE OpsManagers ADD COLUMN IF NOT EXISTS IsActive BOOLEAN DEFAULT TRUE;`);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS StoreManagers (
@@ -31,9 +37,11 @@ const createTables = async () => {
                 StoreManagerName VARCHAR(255) NOT NULL,
                 OracleID INTEGER UNIQUE,
                 BrandID INTEGER REFERENCES Brands(BrandID),
-                LocationID INTEGER REFERENCES Locations(LocationID)
+                LocationID INTEGER REFERENCES Locations(LocationID),
+                IsActive BOOLEAN DEFAULT TRUE
             );
         `);
+        await pool.query(`ALTER TABLE StoreManagers ADD COLUMN IF NOT EXISTS IsActive BOOLEAN DEFAULT TRUE;`);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Stores (
@@ -43,16 +51,23 @@ const createTables = async () => {
                 BrandID INTEGER REFERENCES Brands(BrandID),
                 LocationID INTEGER REFERENCES Locations(LocationID),
                 OpsManagerID INTEGER REFERENCES OpsManagers(OpsManagerID),
-                StoreManagerID INTEGER REFERENCES StoreManagers(StoreManagerID)
+                StoreManagerID INTEGER REFERENCES StoreManagers(StoreManagerID),
+                LoginPassword VARCHAR(255),
+                IsActive BOOLEAN DEFAULT TRUE
             );
         `);
+        await pool.query(`ALTER TABLE Stores ADD COLUMN IF NOT EXISTS Email VARCHAR(255);`);
+        await pool.query(`ALTER TABLE Stores ADD COLUMN IF NOT EXISTS LoginPassword VARCHAR(255);`);
+        await pool.query(`ALTER TABLE Stores ADD COLUMN IF NOT EXISTS IsActive BOOLEAN DEFAULT TRUE;`);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS MajorCriteria (
                 MajorCriteriaID SERIAL PRIMARY KEY,
-                MajorCriteriaName VARCHAR(255) NOT NULL
+                MajorCriteriaName VARCHAR(255) NOT NULL,
+                IsActive BOOLEAN DEFAULT TRUE
             );
         `);
+        await pool.query(`ALTER TABLE MajorCriteria ADD COLUMN IF NOT EXISTS IsActive BOOLEAN DEFAULT TRUE;`);
 
         await pool.query(`
             DO $$ BEGIN
@@ -71,9 +86,11 @@ const createTables = async () => {
                 AuditComment TEXT NOT NULL,
                 SubPointCriteria VARCHAR(50) NOT NULL,
                 Weightage NUMERIC(5,2) NOT NULL,
-                RiskMatrix RiskLevel NOT NULL
+                RiskMatrix RiskLevel NOT NULL,
+                IsActive BOOLEAN DEFAULT TRUE
             );
         `);
+        await pool.query(`ALTER TABLE AuditPoints ADD COLUMN IF NOT EXISTS IsActive BOOLEAN DEFAULT TRUE;`);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS Roles (
@@ -88,12 +105,14 @@ const createTables = async () => {
                 OracleID INTEGER UNIQUE,
                 UserName VARCHAR(255) NOT NULL,
                 Password VARCHAR(255) NOT NULL,
+                Email VARCHAR(255),
                 LocationID INTEGER REFERENCES Locations(LocationID),
                 RoleID INTEGER REFERENCES Roles(RoleID),
                 IsActive BOOLEAN DEFAULT TRUE,
                 CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
+        await pool.query(`ALTER TABLE Users ADD COLUMN IF NOT EXISTS Email VARCHAR(255);`);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS AuditAssignments (
@@ -106,9 +125,21 @@ const createTables = async () => {
                 Status VARCHAR(50) DEFAULT 'Submitted',
                 TotalScore NUMERIC(5,2),
                 FinalPercentage NUMERIC(5,2),
-                RiskLevel VARCHAR(50)
+                RiskLevel VARCHAR(50),
+                ActionNote TEXT,
+                RejectionReason TEXT,
+                RevisionReason TEXT,
+                AuditManagerNote TEXT,
+                CashCount JSONB,
+                IsActive BOOLEAN DEFAULT TRUE
             );
         `);
+        await pool.query(`ALTER TABLE AuditAssignments ADD COLUMN IF NOT EXISTS ActionNote TEXT;`);
+        await pool.query(`ALTER TABLE AuditAssignments ADD COLUMN IF NOT EXISTS RejectionReason TEXT;`);
+        await pool.query(`ALTER TABLE AuditAssignments ADD COLUMN IF NOT EXISTS RevisionReason TEXT;`);
+        await pool.query(`ALTER TABLE AuditAssignments ADD COLUMN IF NOT EXISTS AuditManagerNote TEXT;`);
+        await pool.query(`ALTER TABLE AuditAssignments ADD COLUMN IF NOT EXISTS CashCount JSONB;`);
+        await pool.query(`ALTER TABLE AuditAssignments ADD COLUMN IF NOT EXISTS IsActive BOOLEAN DEFAULT TRUE;`);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS AuditEvaluations (
@@ -150,6 +181,7 @@ const createTables = async () => {
                 CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
+        await pool.query(`ALTER TABLE Notifications ADD COLUMN IF NOT EXISTS StoreSerial INTEGER REFERENCES Stores(StoreSerial);`);
 
         console.log(`Tables checked/created successfully in database: ${process.env.DB_NAME} ✅✅`);
 
@@ -161,7 +193,3 @@ const createTables = async () => {
 createTables().then(() => {
     pool.end();
 });
-
-
-
-// ALTER TABLE Notifications ADD COLUMN IF NOT EXISTS StoreSerial INTEGER REFERENCES Stores(StoreSerial);
