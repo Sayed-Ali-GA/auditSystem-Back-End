@@ -35,6 +35,83 @@ const BHD_DENOMINATIONS = [
 ];
 
 // ============================================================================
+// CashCount shape resolution
+// ============================================================================
+// CashCount (JSONB) can be in one of three shapes, oldest to newest:
+//
+// 1) Legacy single-till object: { denominations, foreignCurrency, tillFloat,
+//    saleCashPerReport, paidBills, reimbursements, remarks }
+//
+// 2) Older multi-cashier array: [{ name, denominations, ..., paidBills,
+//    reimbursements, storePettyCash }, ...] — Petty Cash fields were
+//    mistakenly duplicated per-cashier in this revision.
+//
+// 3) Current shape: { cashiers: [{ name, denominations, foreignCurrency,
+//    tillFloat, saleCashPerReport, remarks }], pettyCash: { denominations,
+//    foreignCurrency, paidBills, reimbursements, floatBD, remarks } } —
+//    Petty Cash is ONE section per store audit, independent of cashiers.
+//
+// This resolves any of the three into { cashiers, pettyCash }.
+const resolveCashCount = (rawCashCount, fallbackCashierName) => {
+  if (!rawCashCount) {
+    return { cashiers: [], pettyCash: null };
+  }
+
+  // Current shape
+  if (
+    !Array.isArray(rawCashCount) &&
+    typeof rawCashCount === "object" &&
+    Array.isArray(rawCashCount.cashiers)
+  ) {
+    return {
+      cashiers: rawCashCount.cashiers,
+      pettyCash: rawCashCount.pettyCash || null,
+    };
+  }
+
+  // Older multi-cashier array — migrate any legacy per-cashier Petty Cash
+  // data (paidBills / reimbursements / storePettyCash) into a single
+  // Petty Cash object, taken from whichever cashier actually has data.
+  if (Array.isArray(rawCashCount)) {
+    const legacySource = rawCashCount.find(
+      (c) =>
+        (c.paidBills || []).some((b) => b.amount || b.particular) ||
+        (c.reimbursements || []).some((r) => r.amount || r.particular) ||
+        Number(c.storePettyCash) > 0,
+    );
+
+    return {
+      cashiers: rawCashCount,
+      pettyCash: legacySource
+        ? {
+            denominations: {},
+            foreignCurrency: [],
+            paidBills: legacySource.paidBills || [],
+            reimbursements: legacySource.reimbursements || [],
+            floatBD: legacySource.storePettyCash ?? 0,
+            remarks: "",
+          }
+        : null,
+    };
+  }
+
+  // Legacy single-till object
+  if (typeof rawCashCount === "object") {
+    return {
+      cashiers: [
+        {
+          name: fallbackCashierName || "Cashier",
+          ...rawCashCount,
+        },
+      ],
+      pettyCash: null,
+    };
+  }
+
+  return { cashiers: [], pettyCash: null };
+};
+
+// ============================================================================
 // Data shaping
 // ============================================================================
 
@@ -297,117 +374,24 @@ const drawCashTable = (
 };
 
 // ============================================================================
-// Cashier card
+// Shared card chrome — dark header bar with name + balance chip
 // ============================================================================
 
-const drawCashierCard = (doc, x, y, width, cashier, index) => {
-  // ==========================================================================
-  // A. NOTES & COINS
-  // ==========================================================================
-
-  const denomRows = BHD_DENOMINATIONS.filter(
-    (d) => Number(cashier.denominations?.[d.key] || 0) > 0,
-  );
-
-  const denomTotal = BHD_DENOMINATIONS.reduce(
-    (sum, d) => sum + Number(cashier.denominations?.[d.key] || 0) * d.value,
-    0,
-  );
-
-  // ==========================================================================
-  // FOREIGN CURRENCY
-  // ==========================================================================
-
-  const fcRows = (cashier.foreignCurrency || []).filter(
-    (fc) => fc.label || fc.qty || fc.value,
-  );
-
-  const fcTotal = fcRows.reduce(
-    (sum, fc) => sum + (Number(fc.qty) || 0) * (Number(fc.value) || 0),
-    0,
-  );
-
-  // ==========================================================================
-  // A. TOTAL CASH
-  // ==========================================================================
-
-  const countedTotal = denomTotal + fcTotal;
-
-  // ==========================================================================
-  // B. PAID BILLS / IOUs
-  // ==========================================================================
-
-  const paidBillsRows = (cashier.paidBills || []).filter(
-    (bill) => bill.particular || bill.amount,
-  );
-
-  const paidBillsTotal = paidBillsRows.reduce(
-    (sum, bill) => sum + (Number(bill.amount) || 0),
-    0,
-  );
-
-  // ==========================================================================
-  // C. REIMBURSEMENTS
-  // ==========================================================================
-
-  const reimbursementRows = (cashier.reimbursements || []).filter(
-    (item) => item.particular || item.amount,
-  );
-
-  const reimbursementsTotal = reimbursementRows.reduce(
-    (sum, item) => sum + (Number(item.amount) || 0),
-    0,
-  );
-
-  // ==========================================================================
-  // GRAND TOTAL = A + B + C
-  // ==========================================================================
-
-  const grandTotal = countedTotal + paidBillsTotal + reimbursementsTotal;
-
-  // ==========================================================================
-  // REPORT TOTAL
-  // ==========================================================================
-
-  const reportTotal =
-    (Number(cashier.tillFloat) || 0) + (Number(cashier.saleCashPerReport) || 0);
-
-  // ==========================================================================
-  // DIFFERENCE
-  // ==========================================================================
-
-  const difference = grandTotal - reportTotal;
-
-  const isBalanced = Math.abs(difference) < 0.001;
-
-  const diffColor = isBalanced ? "#1f7a4d" : "#b91c1c";
-
-  const cardTop = y;
-
-  // ==========================================================================
-  // CASHIER HEADER
-  // ==========================================================================
-
+const drawCardHeader = (doc, x, y, width, title, isBalanced, difference) => {
   const headerH = 26;
 
   y = ensureSpace(doc, y, headerH + 20);
 
   doc.rect(x, y, width, headerH).fill("#1f2328");
 
-  // Cashier name
-
   doc
     .font("Helvetica-Bold")
     .fontSize(10)
     .fillColor("#ffffff")
-    .text(cashier.name || `Cashier ${index + 1}`, x + 10, y + 7, {
+    .text(title, x + 10, y + 7, {
       width: width - 160,
       lineBreak: false,
     });
-
-  // ==========================================================================
-  // BALANCE CHIP
-  // ==========================================================================
 
   const chipLabel = isBalanced
     ? "BALANCED"
@@ -429,240 +413,74 @@ const drawCashierCard = (doc, x, y, width, cashier, index) => {
       lineBreak: false,
     });
 
-  y += headerH + 10;
+  return y + headerH + 10;
+};
 
-  // ==========================================================================
-  // TWO COLUMNS
-  // ==========================================================================
+// ============================================================================
+// Remarks block (shared)
+// ============================================================================
 
-  const gap = 16;
+const drawRemarksBlock = (doc, x, y, width, remarks) => {
+  if (!remarks || !String(remarks).trim()) return y;
 
-  const colWidth = (width - gap) / 2;
-
-  const leftX = x;
-
-  const rightX = x + colWidth + gap;
-
-  let leftY = y;
-  let rightY = y;
-
-  // ==========================================================================
-  // LEFT COLUMN
-  // ==========================================================================
-
-  // --------------------------------------------------------------------------
-  // Notes & Coins
-  // --------------------------------------------------------------------------
-
-  leftY = drawCashTable(doc, leftX, leftY, colWidth, {
-    title: "Notes & Coins",
-
-    headers: ["Denomination", "Qty", "Amount (BHD)"],
-
-    colRatios: [0.5, 0.2, 0.3],
-
-    rows: denomRows.map((d) => [
-      d.label,
-
-      String(Number(cashier.denominations?.[d.key] || 0)),
-
-      (Number(cashier.denominations?.[d.key] || 0) * d.value).toFixed(3),
-    ]),
-
-    totalRow: ["Total", "", denomTotal.toFixed(3)],
-
-    emptyLabel: "No notes or coins counted.",
-  });
-
-  // --------------------------------------------------------------------------
-  // Foreign Currency
-  // --------------------------------------------------------------------------
-
-  if (fcRows.length > 0) {
-    leftY = drawCashTable(doc, leftX, leftY, colWidth, {
-      title: "Foreign Currency",
-
-      headers: ["Currency", "Qty", "Amount (BHD)"],
-
-      colRatios: [0.5, 0.2, 0.3],
-
-      rows: fcRows.map((fc) => [
-        fc.label || "FC",
-
-        String(fc.qty || 0),
-
-        ((Number(fc.qty) || 0) * (Number(fc.value) || 0)).toFixed(3),
-      ]),
-
-      totalRow: ["Total", "", fcTotal.toFixed(3)],
-
-      emptyLabel: "",
-    });
-  }
-
-  // --------------------------------------------------------------------------
-  // B. Paid Bills / IOUs
-  // --------------------------------------------------------------------------
-
-  if (paidBillsRows.length > 0) {
-    leftY = drawCashTable(doc, leftX, leftY, colWidth, {
-      title: "B. Paid Bills / IOUs",
-
-      headers: ["Particulars", "Amount (BHD)"],
-
-      colRatios: [0.68, 0.32],
-
-      rows: paidBillsRows.map((bill) => [
-        bill.particular || "-",
-
-        (Number(bill.amount) || 0).toFixed(3),
-      ]),
-
-      totalRow: ["Total (B)", paidBillsTotal.toFixed(3)],
-
-      emptyLabel: "",
-    });
-  }
-
-  // --------------------------------------------------------------------------
-  // C. Reimbursements
-  // --------------------------------------------------------------------------
-
-  if (reimbursementRows.length > 0) {
-    leftY = drawCashTable(doc, leftX, leftY, colWidth, {
-      title: "C. Statements for Reimbursement",
-
-      headers: ["Particulars", "Amount (BHD)"],
-
-      colRatios: [0.68, 0.32],
-
-      rows: reimbursementRows.map((item) => [
-        item.particular || "-",
-
-        (Number(item.amount) || 0).toFixed(3),
-      ]),
-
-      totalRow: ["Total (C)", reimbursementsTotal.toFixed(3)],
-
-      emptyLabel: "",
-    });
-  }
-
-  // ==========================================================================
-  // RIGHT COLUMN
-  // ==========================================================================
-
-  // --------------------------------------------------------------------------
-  // Report Figures
-  // --------------------------------------------------------------------------
-
-  rightY = drawCashTable(doc, rightX, rightY, colWidth, {
-    title: "Report Figures",
-
-    headers: ["Figure", "", "Amount (BHD)"],
-
-    colRatios: [0.5, 0.2, 0.3],
-
-    rows: [
-      ["Tills Float", "", Number(cashier.tillFloat || 0).toFixed(3)],
-
-      [
-        "Sale Cash (per report)",
-        "",
-        Number(cashier.saleCashPerReport || 0).toFixed(3),
-      ],
-    ],
-
-    totalRow: ["Total as per Report", "", reportTotal.toFixed(3)],
-
-    emptyLabel: "",
-  });
-
-  // ==========================================================================
-  // CASH SUMMARY TABLE (Tills Float / Sale Cash / Total Cash with Cashier /
-  // Total Cash as per Report / Difference)
-  // ==========================================================================
-
-  rightY = drawCashTable(doc, rightX, rightY, colWidth, {
-    title: "Cash Summary",
-
-    headers: ["Particulars", "", "Amount (BHD)"],
-
-    colRatios: [0.5, 0.2, 0.3],
-
-    rows: [
-      ["Tills Float", "", Number(cashier.tillFloat || 0).toFixed(3)],
-
-      [
-        "Sale Cash (report)",
-        "",
-        Number(cashier.saleCashPerReport || 0).toFixed(3),
-      ],
-
-      ["Total Cash with Cashier", "", grandTotal.toFixed(3)],
-
-      ["Total Cash as per Report", "", reportTotal.toFixed(3)],
-
-      [
-        "Difference (Excess/Shortage)",
-        "",
-        `${difference > 0 ? "+" : ""}${difference.toFixed(3)}`,
-      ],
-    ],
-
-    totalRow: null,
-
-    emptyLabel: "",
-  });
-
-  // ==========================================================================
-  // A / B / C / GRAND TOTAL / REPORT / DIFFERENCE SUMMARY
-  // ==========================================================================
-
-  const summaryHeight = 120;
-
-  rightY = ensureSpace(doc, rightY, summaryHeight + 10);
+  y = ensureSpace(doc, y, 40);
 
   doc
-    .rect(rightX, rightY, colWidth, summaryHeight)
-    .fillAndStroke("#f7f8f9", "#d9dcdf");
+    .font("Helvetica-Bold")
+    .fontSize(7.5)
+    .fillColor("#888888")
+    .text("REMARKS", x, y, { lineBreak: false });
 
-  const summaryLines = [
-    {
-      label: "Total Cash (A)",
-      value: `${countedTotal.toFixed(3)} BHD`,
-    },
+  y += 11;
 
-    {
-      label: "Paid Bills / IOUs (B)",
-      value: `${paidBillsTotal.toFixed(3)} BHD`,
-    },
+  const remarksText = String(remarks);
 
-    {
-      label: "Statements for Reimbursement (C)",
-      value: `${reimbursementsTotal.toFixed(3)} BHD`,
-    },
+  const remarksHeight = doc.heightOfString(remarksText, {
+    width: width - 16,
+    lineGap: 1,
+  });
 
-    {
-      label: "Grand Total (A+B+C)",
-      value: `${grandTotal.toFixed(3)} BHD`,
-      bold: true,
-      divider: true,
-    },
+  doc
+    .save()
+    .rect(x, y, width, remarksHeight + 12)
+    .strokeColor("#d9dcdf")
+    .lineWidth(0.6)
+    .dash(2, { space: 2 })
+    .stroke()
+    .restore();
 
-    {
-      label: "As per Report",
-      value: `${reportTotal.toFixed(3)} BHD`,
-    },
-  ];
+  doc
+    .font("Helvetica")
+    .fontSize(8)
+    .fillColor("#444444")
+    .text(remarksText, x + 8, y + 6, {
+      width: width - 16,
+      lineGap: 1,
+    });
 
-  let sy = rightY + 8;
+  return y + remarksHeight + 12 + 10;
+};
 
-  summaryLines.forEach((line) => {
+// ============================================================================
+// Summary panel (shared) — a bordered box of label/value lines, with an
+// optional bold divider line before the final "Difference" row.
+// ============================================================================
+
+const drawSummaryPanel = (doc, x, y, width, lines, diffLabel, diffValue, diffColor) => {
+  const lineHeight = 14;
+  const panelHeight = lines.length * lineHeight + 8 + 24;
+
+  y = ensureSpace(doc, y, panelHeight + 10);
+
+  doc.rect(x, y, width, panelHeight).fillAndStroke("#f7f8f9", "#d9dcdf");
+
+  let sy = y + 8;
+
+  lines.forEach((line) => {
     if (line.divider) {
       doc
-        .moveTo(rightX + 10, sy - 2)
-        .lineTo(rightX + colWidth - 10, sy - 2)
+        .moveTo(x + 10, sy - 2)
+        .lineTo(x + width - 10, sy - 2)
         .strokeColor("#d9dcdf")
         .lineWidth(0.5)
         .stroke();
@@ -674,8 +492,8 @@ const drawCashierCard = (doc, x, y, width, cashier, index) => {
       .font(line.bold ? "Helvetica-Bold" : "Helvetica")
       .fontSize(line.bold ? 8.5 : 8)
       .fillColor(line.bold ? "#1f2328" : "#555555")
-      .text(line.label, rightX + 10, sy, {
-        width: colWidth * 0.6,
+      .text(line.label, x + 10, sy, {
+        width: width * 0.6,
         lineBreak: false,
       });
 
@@ -683,106 +501,327 @@ const drawCashierCard = (doc, x, y, width, cashier, index) => {
       .font("Helvetica-Bold")
       .fontSize(line.bold ? 9 : 8.5)
       .fillColor(line.bold ? "#1f2328" : "#111827")
-      .text(line.value, rightX + 10, sy, {
-        width: colWidth - 20,
+      .text(line.value, x + 10, sy, {
+        width: width - 20,
         align: "right",
         lineBreak: false,
       });
 
-    sy += 14;
+    sy += lineHeight;
   });
 
-  // Difference divider
-
   doc
-    .moveTo(rightX + 10, sy + 2)
-    .lineTo(rightX + colWidth - 10, sy + 2)
+    .moveTo(x + 10, sy + 2)
+    .lineTo(x + width - 10, sy + 2)
     .strokeColor("#d9dcdf")
     .lineWidth(0.5)
     .stroke();
 
   sy += 8;
 
-  // Difference label
-
   doc
     .font("Helvetica-Bold")
     .fontSize(8.5)
     .fillColor("#1f2328")
-    .text("Difference Excess/Shortage", rightX + 10, sy, {
-      width: colWidth * 0.6,
+    .text(diffLabel, x + 10, sy, {
+      width: width * 0.6,
       lineBreak: false,
     });
-
-  // Difference value
 
   doc
     .font("Helvetica-Bold")
     .fontSize(9)
     .fillColor(diffColor)
-    .text(
-      `${difference > 0 ? "+" : ""}${difference.toFixed(3)} BHD`,
-      rightX + 10,
-      sy,
-      {
-        width: colWidth - 20,
-        align: "right",
-        lineBreak: false,
-      },
-    );
-
-  rightY += summaryHeight + 10;
-
-  // ==========================================================================
-  // REMARKS
-  // ==========================================================================
-
-  if (cashier.remarks && String(cashier.remarks).trim()) {
-    rightY = ensureSpace(doc, rightY, 40);
-
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(7.5)
-      .fillColor("#888888")
-      .text("REMARKS", rightX, rightY, {
-        lineBreak: false,
-      });
-
-    rightY += 11;
-
-    const remarksText = String(cashier.remarks);
-
-    const remarksHeight = doc.heightOfString(remarksText, {
-      width: colWidth - 16,
-      lineGap: 1,
+    .text(diffValue, x + 10, sy, {
+      width: width - 20,
+      align: "right",
+      lineBreak: false,
     });
 
-    doc
-      .save()
-      .rect(rightX, rightY, colWidth, remarksHeight + 12)
-      .strokeColor("#d9dcdf")
-      .lineWidth(0.6)
-      .dash(2, {
-        space: 2,
-      })
-      .stroke()
-      .restore();
+  return y + panelHeight + 10;
+};
 
-    doc
-      .font("Helvetica")
-      .fontSize(8)
-      .fillColor("#444444")
-      .text(remarksText, rightX + 8, rightY + 6, {
-        width: colWidth - 16,
-        lineGap: 1,
-      });
+// ============================================================================
+// Till Float card — ONE per cashier. Compares physical cash counted in the
+// cashier's till (denominations + FC) against Tills Float + Sale Cash.
+// Independent of Petty Cash (Paid Bills / Reimbursements / Float BD),
+// which is a single, store-wide check — see drawPettyCashCard below.
+// ============================================================================
 
-    rightY += remarksHeight + 12 + 10;
+const drawTillFloatCard = (doc, x, y, width, cashier, index) => {
+  const denomRows = BHD_DENOMINATIONS.filter(
+    (d) => Number(cashier.denominations?.[d.key] || 0) > 0,
+  );
+
+  const denomTotal = BHD_DENOMINATIONS.reduce(
+    (sum, d) => sum + Number(cashier.denominations?.[d.key] || 0) * d.value,
+    0,
+  );
+
+  const fcRows = (cashier.foreignCurrency || []).filter(
+    (fc) => fc.label || fc.qty || fc.value,
+  );
+
+  const fcTotal = fcRows.reduce(
+    (sum, fc) => sum + (Number(fc.qty) || 0) * (Number(fc.value) || 0),
+    0,
+  );
+
+  const countedTotal = denomTotal + fcTotal; // A
+
+  const reportTotal =
+    (Number(cashier.tillFloat) || 0) + (Number(cashier.saleCashPerReport) || 0);
+
+  const difference = countedTotal - reportTotal;
+
+  const isBalanced = Math.abs(difference) < 0.001;
+
+  const diffColor = isBalanced ? "#1f7a4d" : "#b91c1c";
+
+  const cardTop = y;
+
+  y = drawCardHeader(
+    doc,
+    x,
+    y,
+    width,
+    `${cashier.name || `Cashier ${index + 1}`} — Till Float Check`,
+    isBalanced,
+    difference,
+  );
+
+  const gap = 16;
+  const colWidth = (width - gap) / 2;
+  const leftX = x;
+  const rightX = x + colWidth + gap;
+
+  let leftY = y;
+  let rightY = y;
+
+  // Left column — Notes & Coins, Foreign Currency
+  leftY = drawCashTable(doc, leftX, leftY, colWidth, {
+    title: "Notes & Coins",
+    headers: ["Denomination", "Qty", "Amount (BHD)"],
+    colRatios: [0.5, 0.2, 0.3],
+    rows: denomRows.map((d) => [
+      d.label,
+      String(Number(cashier.denominations?.[d.key] || 0)),
+      (Number(cashier.denominations?.[d.key] || 0) * d.value).toFixed(3),
+    ]),
+    totalRow: ["Total", "", denomTotal.toFixed(3)],
+    emptyLabel: "No notes or coins counted.",
+  });
+
+  if (fcRows.length > 0) {
+    leftY = drawCashTable(doc, leftX, leftY, colWidth, {
+      title: "Foreign Currency",
+      headers: ["Currency", "Qty", "Amount (BHD)"],
+      colRatios: [0.5, 0.2, 0.3],
+      rows: fcRows.map((fc) => [
+        fc.label || "FC",
+        String(fc.qty || 0),
+        ((Number(fc.qty) || 0) * (Number(fc.value) || 0)).toFixed(3),
+      ]),
+      totalRow: ["Total", "", fcTotal.toFixed(3)],
+      emptyLabel: "",
+    });
   }
 
-  // ==========================================================================
-  // CARD BORDER
-  // ==========================================================================
+  // Right column — Report Figures + Summary
+  rightY = drawCashTable(doc, rightX, rightY, colWidth, {
+    title: "Report Figures",
+    headers: ["Figure", "", "Amount (BHD)"],
+    colRatios: [0.5, 0.2, 0.3],
+    rows: [
+      ["Tills Float", "", Number(cashier.tillFloat || 0).toFixed(3)],
+      [
+        "Sale Cash (per report)",
+        "",
+        Number(cashier.saleCashPerReport || 0).toFixed(3),
+      ],
+    ],
+    totalRow: ["Total as per Report", "", reportTotal.toFixed(3)],
+    emptyLabel: "",
+  });
+
+  rightY = drawSummaryPanel(
+    doc,
+    rightX,
+    rightY,
+    colWidth,
+    [
+      { label: "Total Cash with the Cashier (A)", value: `${countedTotal.toFixed(3)} BHD` },
+      { label: "Total Cash as per Report", value: `${reportTotal.toFixed(3)} BHD`, divider: true },
+    ],
+    "Difference Excess/Shortage BD",
+    `${difference > 0 ? "+" : ""}${difference.toFixed(3)} BHD`,
+    diffColor,
+  );
+
+  rightY = drawRemarksBlock(doc, rightX, rightY, colWidth, cashier.remarks);
+
+  const cardBottom = Math.max(leftY, rightY);
+
+  if (Math.ceil(cardBottom) < doc.page.height - 40) {
+    doc
+      .save()
+      .rect(x - 6, cardTop - 6, width + 12, cardBottom - cardTop + 6)
+      .strokeColor("#e5e7eb")
+      .lineWidth(0.8)
+      .stroke()
+      .restore();
+  }
+
+  return cardBottom + 16;
+};
+
+// ============================================================================
+// Petty Cash card — ONE per store audit (NOT per cashier). Compares A
+// (physical cash) + B (paid bills/IOUs) + C (reimbursement statements)
+// against a single "Float BD" figure for the whole store.
+// ============================================================================
+
+const drawPettyCashCard = (doc, x, y, width, pettyCash) => {
+  const denomRows = BHD_DENOMINATIONS.filter(
+    (d) => Number(pettyCash.denominations?.[d.key] || 0) > 0,
+  );
+
+  const denomTotal = BHD_DENOMINATIONS.reduce(
+    (sum, d) => sum + Number(pettyCash.denominations?.[d.key] || 0) * d.value,
+    0,
+  );
+
+  const fcRows = (pettyCash.foreignCurrency || []).filter(
+    (fc) => fc.label || fc.qty || fc.value,
+  );
+
+  const fcTotal = fcRows.reduce(
+    (sum, fc) => sum + (Number(fc.qty) || 0) * (Number(fc.value) || 0),
+    0,
+  );
+
+  const totalCash = denomTotal + fcTotal; // A
+
+  const paidBillsRows = (pettyCash.paidBills || []).filter(
+    (bill) => bill.particular || bill.amount,
+  );
+
+  const paidBillsTotal = paidBillsRows.reduce(
+    (sum, bill) => sum + (Number(bill.amount) || 0),
+    0,
+  ); // B
+
+  const reimbursementRows = (pettyCash.reimbursements || []).filter(
+    (item) => item.particular || item.amount,
+  );
+
+  const reimbursementsTotal = reimbursementRows.reduce(
+    (sum, item) => sum + (Number(item.amount) || 0),
+    0,
+  ); // C
+
+  const grandTotal = totalCash + paidBillsTotal + reimbursementsTotal; // A+B+C
+
+  const floatBD = Number(pettyCash.floatBD) || 0;
+
+  const difference = floatBD - grandTotal;
+
+  const isBalanced = Math.abs(difference) < 0.001;
+
+  const diffColor = isBalanced ? "#1f7a4d" : "#b91c1c";
+
+  const cardTop = y;
+
+  y = drawCardHeader(
+    doc,
+    x,
+    y,
+    width,
+    "Store Petty Cash Verification (one per store)",
+    isBalanced,
+    difference,
+  );
+
+  const gap = 16;
+  const colWidth = (width - gap) / 2;
+  const leftX = x;
+  const rightX = x + colWidth + gap;
+
+  let leftY = y;
+  let rightY = y;
+
+  // Left column — Notes & Coins, Foreign Currency, B, C
+  leftY = drawCashTable(doc, leftX, leftY, colWidth, {
+    title: "A. Notes & Coins",
+    headers: ["Denomination", "Qty", "Amount (BHD)"],
+    colRatios: [0.5, 0.2, 0.3],
+    rows: denomRows.map((d) => [
+      d.label,
+      String(Number(pettyCash.denominations?.[d.key] || 0)),
+      (Number(pettyCash.denominations?.[d.key] || 0) * d.value).toFixed(3),
+    ]),
+    totalRow: ["Total", "", denomTotal.toFixed(3)],
+    emptyLabel: "No notes or coins counted.",
+  });
+
+  if (fcRows.length > 0) {
+    leftY = drawCashTable(doc, leftX, leftY, colWidth, {
+      title: "Foreign Currency",
+      headers: ["Currency", "Qty", "Amount (BHD)"],
+      colRatios: [0.5, 0.2, 0.3],
+      rows: fcRows.map((fc) => [
+        fc.label || "FC",
+        String(fc.qty || 0),
+        ((Number(fc.qty) || 0) * (Number(fc.value) || 0)).toFixed(3),
+      ]),
+      totalRow: ["Total", "", fcTotal.toFixed(3)],
+      emptyLabel: "",
+    });
+  }
+
+  leftY = drawCashTable(doc, leftX, leftY, colWidth, {
+    title: "B. Paid Bills / IOUs",
+    headers: ["Particulars", "Amount (BHD)"],
+    colRatios: [0.68, 0.32],
+    rows: paidBillsRows.map((bill) => [
+      bill.particular || "-",
+      (Number(bill.amount) || 0).toFixed(3),
+    ]),
+    totalRow: ["Total (B)", paidBillsTotal.toFixed(3)],
+    emptyLabel: "No paid bills / IOUs recorded.",
+  });
+
+  leftY = drawCashTable(doc, leftX, leftY, colWidth, {
+    title: "C. Statements for Reimbursement",
+    headers: ["Particulars", "Amount (BHD)"],
+    colRatios: [0.68, 0.32],
+    rows: reimbursementRows.map((item) => [
+      item.particular || "-",
+      (Number(item.amount) || 0).toFixed(3),
+    ]),
+    totalRow: ["Total (C)", reimbursementsTotal.toFixed(3)],
+    emptyLabel: "No reimbursement statements recorded.",
+  });
+
+  // Right column — A+B+C+Float BD summary + remarks
+  rightY = drawSummaryPanel(
+    doc,
+    rightX,
+    rightY,
+    colWidth,
+    [
+      { label: "Total Cash (A)", value: `${totalCash.toFixed(3)} BHD` },
+      { label: "Paid Bills / IOUs (B)", value: `${paidBillsTotal.toFixed(3)} BHD` },
+      { label: "Statements for Reimbursement (C)", value: `${reimbursementsTotal.toFixed(3)} BHD` },
+      { label: "Grand Total (A+B+C)", value: `${grandTotal.toFixed(3)} BHD`, bold: true, divider: true },
+      { label: "Float BD", value: `${floatBD.toFixed(3)} BHD` },
+    ],
+    "Difference Excess/Shortage BD",
+    `${difference > 0 ? "+" : ""}${difference.toFixed(3)} BHD`,
+    diffColor,
+  );
+
+  rightY = drawRemarksBlock(doc, rightX, rightY, colWidth, pettyCash.remarks);
 
   const cardBottom = Math.max(leftY, rightY);
 
@@ -840,6 +879,14 @@ const generateAuditPdfBuffer = (audit) => {
       const pageRight = doc.page.margins.right;
 
       const pageWidth = doc.page.width - pageLeft - pageRight;
+
+      // ====================================================================
+      // CASH COUNT — resolve once up front, used both in the meta table
+      // (cashier names) and in the Cash Reconciliation pages below.
+      // ====================================================================
+
+      const { cashiers: cashiersCashCount, pettyCash: pettyCashData } =
+        resolveCashCount(audit.cashcount, audit.cashiername);
 
       // ====================================================================
       // LETTERHEAD
@@ -916,12 +963,10 @@ const generateAuditPdfBuffer = (audit) => {
       let y = 90;
 
       const cashierNamesForMeta = (() => {
-        if (Array.isArray(audit.cashcount) && audit.cashcount.length) {
-          const names = audit.cashcount.map((c) => c.name).filter(Boolean);
+        const names = cashiersCashCount.map((c) => c.name).filter(Boolean);
 
-          if (names.length) {
-            return names.join(", ");
-          }
+        if (names.length) {
+          return names.join(", ");
         }
 
         return audit.cashiername || "-";
@@ -1202,50 +1247,24 @@ const generateAuditPdfBuffer = (audit) => {
       });
 
       // ====================================================================
-      // CASH RECONCILIATION DATA
-      // ====================================================================
-
-      let cashiersCashCount = [];
-
-      if (audit.cashcount) {
-        if (Array.isArray(audit.cashcount)) {
-          cashiersCashCount = audit.cashcount;
-        } else {
-          // Legacy single till
-          cashiersCashCount = [
-            {
-              name: audit.cashiername || "Cashier",
-
-              ...audit.cashcount,
-            },
-          ];
-        }
-      }
-
-      // ====================================================================
       // CASH RECONCILIATION
-      // One complete page per cashier
+      // One page per cashier (Till Float check), then ONE final page for
+      // the store-wide Petty Cash check, if present.
       // ====================================================================
 
-      if (cashiersCashCount.length > 0) {
+      if (cashiersCashCount.length > 0 || pettyCashData) {
         cashiersCashCount.forEach((cashier, index) => {
-          // -------------------------------------------------------------
           // Every cashier starts on a new page
-          // -------------------------------------------------------------
 
           doc.addPage();
 
           let cy = 40;
 
-          // -------------------------------------------------------------
-          // Header
-          // -------------------------------------------------------------
-
           doc
             .font("Helvetica-Bold")
             .fontSize(16)
             .fillColor("#1f2328")
-            .text("Cash Reconciliation", pageLeft, cy, {
+            .text("Cash Reconciliation — Till Float", pageLeft, cy, {
               lineBreak: false,
             });
 
@@ -1266,7 +1285,52 @@ const generateAuditPdfBuffer = (audit) => {
               },
             );
 
-          // Header divider
+          doc
+            .moveTo(pageLeft, cy + 38)
+            .lineTo(pageLeft + pageWidth, cy + 38)
+            .strokeColor("#1f2328")
+            .lineWidth(1.2)
+            .stroke();
+
+          cy += 52;
+
+          drawTillFloatCard(doc, pageLeft, cy, pageWidth, cashier, index);
+        });
+
+        // ------------------------------------------------------------
+        // Store Petty Cash — ONE page, printed once regardless of how
+        // many cashiers there are.
+        // ------------------------------------------------------------
+
+        if (pettyCashData) {
+          doc.addPage();
+
+          let cy = 40;
+
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(16)
+            .fillColor("#1f2328")
+            .text("Cash Reconciliation — Store Petty Cash", pageLeft, cy, {
+              lineBreak: false,
+            });
+
+          doc
+            .font("Helvetica")
+            .fontSize(9)
+            .fillColor("#6b7280")
+            .text(
+              `${safe(audit.storecode)} — ${safe(audit.brandname)} · ${
+                audit.auditdate
+                  ? new Date(audit.auditdate).toLocaleDateString("en-GB")
+                  : "-"
+              }`,
+              pageLeft,
+              cy + 20,
+              {
+                lineBreak: false,
+              },
+            );
 
           doc
             .moveTo(pageLeft, cy + 38)
@@ -1277,12 +1341,8 @@ const generateAuditPdfBuffer = (audit) => {
 
           cy += 52;
 
-          // -------------------------------------------------------------
-          // Cashier card
-          // -------------------------------------------------------------
-
-          drawCashierCard(doc, pageLeft, cy, pageWidth, cashier, index);
-        });
+          drawPettyCashCard(doc, pageLeft, cy, pageWidth, pettyCashData);
+        }
       }
 
       // ====================================================================
